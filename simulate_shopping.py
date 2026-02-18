@@ -2,7 +2,9 @@
 simulate_shopping.py
 ────────────────────
 Simulates random customers shopping at Mini Meijer.
-Each customer grabs 1-5 random products, buying 1-3 units of each.
+Customers are generated with demographic profiles (profession, age)
+that determine WHEN they shop (time-of-day weights) and WHAT they buy
+(category preference weights).
 After the simulation, a summary report is printed.
 """
 
@@ -18,8 +20,8 @@ from inventory import (
 DELAY_BETWEEN = 0.3         # Seconds between customers (for readability)
 
 # ─── Time-of-Day Schedule ──────────────────────────────────────────
-# Each block: (label, hour range, number of customers, max cart size,
-#              list of categories that sell more during this window)
+# Each block has a label, hours, total customers, and max cart size.
+# The demographic mix is now driven by SHOPPER_PROFILES below.
 
 TIME_BLOCKS = [
     {
@@ -27,30 +29,182 @@ TIME_BLOCKS = [
         "hours":      "7:00 - 9:00",
         "customers":  8,
         "max_cart":   4,
-        "popular":    ["Dairy", "Bakery", "Beverages"],
     },
     {
         "label":      "Midday (11am - 1pm)",
         "hours":      "11:00 - 13:00",
         "customers":  5,
         "max_cart":   3,
-        "popular":    ["Snacks", "Beverages", "Bakery"],
     },
     {
         "label":      "Evening (4pm - 7pm)",
         "hours":      "16:00 - 19:00",
         "customers":  12,
         "max_cart":   6,
-        "popular":    ["Meat", "Produce", "Dairy", "Pantry", "Desserts"],
     },
     {
         "label":      "Night (8pm - 10pm)",
         "hours":      "20:00 - 22:00",
         "customers":  3,
         "max_cart":   3,
-        "popular":    ["Snacks", "Desserts", "Beverages"],
     },
 ]
+
+
+# ─── Demographic Shopper Profiles ──────────────────────────────────
+# Each profile defines:
+#   - who shops (profession, age range)
+#   - when they prefer to shop (time block weights: morning, midday, evening, night)
+#   - what they buy (category weights -- higher = more likely to pick from that category)
+#
+# Time weights are probability weights for which time block this type
+# of shopper appears in. E.g. a Student has weight 1 for morning,
+# 2 for midday, 8 for evening, 5 for night -- so they mostly show up
+# in the evening.
+
+SHOPPER_PROFILES = {
+    # ── Stay-at-home parents: morning shoppers, family staples ──
+    "Stay-at-Home Parent": {
+        "age_range":    (25, 45),
+        "time_weights":  [8, 3, 1, 0],   # morning heavy
+        "category_weights": {
+            "Dairy": 8, "Bakery": 7, "Produce": 7, "Beverages": 5,
+            "Meat": 6, "Pantry": 8, "Snacks": 5, "Desserts": 4,
+        },
+    },
+    # ── Retired: midday shoppers, healthy + staples ──
+    "Retired": {
+        "age_range":    (60, 80),
+        "time_weights":  [3, 8, 2, 0],   # midday heavy
+        "category_weights": {
+            "Dairy": 7, "Bakery": 8, "Produce": 9, "Beverages": 6,
+            "Meat": 5, "Pantry": 7, "Snacks": 3, "Desserts": 4,
+        },
+    },
+    # ── Students: evening/night, cheap + snacks ──
+    "Student": {
+        "age_range":    (18, 25),
+        "time_weights":  [1, 2, 8, 5],   # evening + night
+        "category_weights": {
+            "Dairy": 4, "Bakery": 5, "Produce": 2, "Beverages": 8,
+            "Meat": 3, "Pantry": 7, "Snacks": 9, "Desserts": 7,
+        },
+    },
+    # ── Office workers (9-5 jobs): evening rush ──
+    "Office Worker": {
+        "age_range":    (25, 55),
+        "time_weights":  [1, 1, 9, 2],   # evening heavy
+        "category_weights": {
+            "Dairy": 6, "Bakery": 4, "Produce": 7, "Beverages": 5,
+            "Meat": 8, "Pantry": 7, "Snacks": 4, "Desserts": 5,
+        },
+    },
+    # ── Trade workers (early shift): morning + evening ──
+    "Trade Worker": {
+        "age_range":    (22, 55),
+        "time_weights":  [5, 1, 7, 1],   # morning + evening
+        "category_weights": {
+            "Dairy": 5, "Bakery": 6, "Produce": 4, "Beverages": 7,
+            "Meat": 8, "Pantry": 6, "Snacks": 6, "Desserts": 3,
+        },
+    },
+    # ── Night shift workers: night + morning ──
+    "Night Shift": {
+        "age_range":    (20, 50),
+        "time_weights":  [4, 0, 1, 8],   # night heavy
+        "category_weights": {
+            "Dairy": 5, "Bakery": 4, "Produce": 3, "Beverages": 8,
+            "Meat": 4, "Pantry": 5, "Snacks": 8, "Desserts": 6,
+        },
+    },
+}
+
+# Map old profession names to shopper profile types
+PROFESSION_TO_PROFILE = {
+    "Teacher":              "Office Worker",
+    "Nurse":                "Night Shift",
+    "Software Engineer":    "Office Worker",
+    "Electrician":          "Trade Worker",
+    "Accountant":           "Office Worker",
+    "Chef":                 "Night Shift",
+    "Mechanic":             "Trade Worker",
+    "Pharmacist":           "Office Worker",
+    "Graphic Designer":     "Office Worker",
+    "Lawyer":               "Office Worker",
+    "Cashier":              "Trade Worker",
+    "Construction Worker":  "Trade Worker",
+    "Dentist":              "Office Worker",
+    "Firefighter":          "Night Shift",
+    "Barber":               "Trade Worker",
+    "Social Worker":        "Office Worker",
+    "Truck Driver":         "Night Shift",
+    "Plumber":              "Trade Worker",
+    "Retail Manager":       "Trade Worker",
+    "Student":              "Student",
+    "Retired":              "Retired",
+    "Freelancer":           "Office Worker",
+    "Doctor":               "Office Worker",
+    "Salesperson":          "Office Worker",
+    "Warehouse Associate":  "Night Shift",
+    "Stay-at-Home Parent":  "Stay-at-Home Parent",
+}
+
+
+def get_profile_for_time_block(block_index):
+    """Pick a shopper profile weighted by who is likely to shop at this time.
+
+    Args:
+        block_index: Index into TIME_BLOCKS (0=morning, 1=midday, 2=evening, 3=night).
+
+    Returns:
+        (profile_name, profile_dict) tuple.
+    """
+    profile_names = list(SHOPPER_PROFILES.keys())
+    weights = [SHOPPER_PROFILES[name]["time_weights"][block_index] for name in profile_names]
+    chosen = random.choices(profile_names, weights=weights, k=1)[0]
+    return chosen, SHOPPER_PROFILES[chosen]
+
+
+def pick_products_by_preference(products, profile, max_items):
+    """Select products for a customer's cart based on their category preferences.
+
+    Uses the profile's category_weights to bias product selection toward
+    categories the customer is more likely to buy from.
+
+    Args:
+        products:   List of all available Product objects.
+        profile:    The shopper profile dict with category_weights.
+        max_items:  Maximum number of items in the cart.
+
+    Returns:
+        A list of Product objects for the cart.
+    """
+    if not products:
+        return []
+
+    cat_weights = profile["category_weights"]
+
+    # Assign a weight to each product based on its category
+    weights = []
+    for p in products:
+        w = cat_weights.get(p.category, 3)  # default weight 3 for unknown categories
+        weights.append(w)
+
+    # Pick items using weighted sampling (no duplicates)
+    num_items = random.randint(1, min(max_items, len(products)))
+    cart = []
+    available = list(range(len(products)))
+    available_weights = list(weights)
+
+    for _ in range(num_items):
+        if not available:
+            break
+        chosen_idx = random.choices(range(len(available)), weights=available_weights, k=1)[0]
+        cart.append(products[available[chosen_idx]])
+        available.pop(chosen_idx)
+        available_weights.pop(chosen_idx)
+
+    return cart
 
 
 # ─── Weighted Purchase Amount ──────────────────────────────────────
@@ -73,15 +227,15 @@ def random_purchase_amount():
 # ─── Customer Demographics ──────────────────────────────────────────
 
 FIRST_NAMES = [
-    "Emma", "Liam", "Olivia", "Noah", "Ava", "James", "Sophia", "Lucas",
-    "Mia", "Ethan", "Isabella", "Mason", "Charlotte", "Logan", "Amelia",
-    "Aiden", "Harper", "Elijah", "Ella", "Ben", "Grace", "Caleb",
-    "Lily", "Jack", "Zoe", "Ryan", "Nora", "Leo", "Chloe", "Dylan",
-    "Aaliyah", "Marcus", "Fatima", "Wei", "Priya", "Carlos", "Yuki",
-    "Darnell", "Keiko", "Rashid", "Ingrid", "Tomás", "Mei-Ling", "Kofi",
-    "Sasha", "Jamal", "Ananya", "Dante", "Luz", "Hiroshi", "Amara",
-    "Devon", "Rosa", "Tariq", "Simone", "Andrei", "Jasmine", "Omar",
-    "Elena", "Kwame", "Valentina", "Raj", "Aisha", "Jorge", "Bianca",
+    "Chloe", "Temi", "Jazlyn", "Noah", "Jacque", "James", "Daniela", "Omar",
+    "Diana", "Carolina", "Isabella", "Mason", "Charlotte", "Logan", "Amelia",
+    "Aiden", "Harper", "Elijah", "Angel", "Ben", "Grace", "Caleb",
+    "Lily", "Jack", "Zoe", "Ryan", "Nora", "Leo", "Amora", "Dylan",
+    "Aaliyah", "Marcus", "Fatima", "Li", "Priya", "Carlos", "Yuki",
+    "Darnell", "Keiko", "Rashid", "Ingrid", "Benito", "Jason", "Kofi",
+    "Princess", "Jamal", "Ananya", "Dante", "Manuel", "Hiroshi", "Amara",
+    "Toure", "Rosa", "Tariq", "Simone", "Andrei", "Jasmine", "Digna",
+    "Elena", "Noel", "Valentina", "Raj", "Aisha", "Jorge", "Bianca",
     "Hassan", "Monique", "Jin", "Camila", "Tyrone", "Leila"
 ]
 
@@ -95,7 +249,7 @@ LAST_NAMES = [
 ]
 
 RACES = [
-    "White", "Black", "Hispanic", "Asian", "Middle Eastern",
+    "White", "Black", "Hispanic", "Asian", "Arab",
     "Native American", "Pacific Islander", "Multiracial"
 ]
 
@@ -104,19 +258,34 @@ PROFESSIONS = [
     "Chef", "Mechanic", "Pharmacist", "Graphic Designer", "Lawyer",
     "Cashier", "Construction Worker", "Dentist", "Firefighter", "Barber",
     "Social Worker", "Truck Driver", "Plumber", "Retail Manager", "Student",
-    "Retired", "Freelancer", "Doctor", "Salesperson", "Warehouse Associate"
+    "Retired", "Freelancer", "Doctor", "Salesperson", "Warehouse Associate",
+    "Stay-at-Home Parent", "Administrator" ,"Security Guard", "Small Business Owner", "Artist", "Musician", "Scientist", "Athlete",
 ]
 
 
 class Customer:
-    """Represents a randomly-generated shopper with demographic info."""
+    """Represents a randomly-generated shopper with demographic info.
 
-    def __init__(self):
+    When a profile_name is provided, the customer's age is drawn from
+    the profile's age range, and their shopper_type is set accordingly.
+    """
+
+    def __init__(self, profile_name=None, profile=None):
         self.first_name = random.choice(FIRST_NAMES)
         self.last_name = random.choice(LAST_NAMES)
-        self.age = random.randint(18, 80)
         self.race = random.choice(RACES)
-        self.profession = random.choice(PROFESSIONS)
+
+        if profile_name and profile:
+            self.shopper_type = profile_name
+            age_lo, age_hi = profile["age_range"]
+            self.age = random.randint(age_lo, age_hi)
+            # Pick a profession that maps to this profile
+            matching = [p for p, t in PROFESSION_TO_PROFILE.items() if t == profile_name]
+            self.profession = random.choice(matching) if matching else profile_name
+        else:
+            self.age = random.randint(18, 80)
+            self.profession = random.choice(PROFESSIONS)
+            self.shopper_type = PROFESSION_TO_PROFILE.get(self.profession, "Office Worker")
 
     @property
     def full_name(self):
@@ -124,7 +293,7 @@ class Customer:
 
     def __str__(self):
         return (f"{self.full_name}, Age {self.age}, "
-                f"{self.race}, {self.profession}")
+                f"{self.race}, {self.profession} [{self.shopper_type}]")
 
 
 def get_all_products():
@@ -156,11 +325,10 @@ def simulate():
     customer_num = 0
 
     # ── Step 3: Simulate each time block ────────────────────────────
-    for block in TIME_BLOCKS:
+    for block_index, block in enumerate(TIME_BLOCKS):
         block_label = block["label"]
         block_customers = block["customers"]
         block_max_cart = block["max_cart"]
-        popular_categories = block["popular"]
         block_revenue = 0.0
 
         print("\n" + "=" * 60)
@@ -170,27 +338,18 @@ def simulate():
 
         for j in range(1, block_customers + 1):
             customer_num += 1
-            customer = Customer()
+
+            # Pick a shopper profile weighted by time of day
+            profile_name, profile = get_profile_for_time_block(block_index)
+            customer = Customer(profile_name, profile)
             products = get_all_products()
 
             if not products:
                 print("  [!] No products left in stock!")
                 break
 
-            # Bias product selection toward popular categories for this time block
-            popular_products = [p for p in products if p.category in popular_categories]
-            other_products = [p for p in products if p.category not in popular_categories]
-
-            # 70% of cart from popular categories, 30% from others
-            num_items = random.randint(1, min(block_max_cart, len(products)))
-            num_popular = max(1, int(num_items * 0.7))
-            num_other = num_items - num_popular
-
-            cart = []
-            if popular_products:
-                cart += random.sample(popular_products, min(num_popular, len(popular_products)))
-            if other_products and num_other > 0:
-                cart += random.sample(other_products, min(num_other, len(other_products)))
+            # Build cart using the customer's category preferences
+            cart = pick_products_by_preference(products, profile, block_max_cart)
 
             print(f"\n  Customer #{customer_num}: {customer}")
 

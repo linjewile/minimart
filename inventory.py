@@ -24,7 +24,10 @@ class HashMap:
 
     Each bucket is a list of Entry objects. When two keys hash to the
     same index, their entries are appended to the same list (chain).
+    Automatically resizes when load factor exceeds the threshold.
     """
+
+    LOAD_FACTOR_THRESHOLD = 0.75  # Resize when count/size exceeds this
 
     def __init__(self, size=97):
         """Initialise the hash map with a fixed number of buckets.
@@ -36,6 +39,66 @@ class HashMap:
         self.size = size          # Number of buckets in the array
         self.count = 0            # Total number of entries stored
         self.buckets = [[] for _ in range(size)]  # Initialize empty chains
+
+    @property
+    def load_factor(self):
+        """Return the current load factor (count / size)."""
+        return self.count / self.size
+
+    @staticmethod
+    def _next_prime(n):
+        """Find the next prime number greater than or equal to n.
+
+        Used when resizing to keep bucket count prime for better distribution.
+        """
+        if n <= 2:
+            return 2
+        candidate = n if n % 2 != 0 else n + 1
+        while True:
+            is_prime = True
+            for i in range(3, int(candidate ** 0.5) + 1, 2):
+                if candidate % i == 0:
+                    is_prime = False
+                    break
+            if is_prime:
+                return candidate
+            candidate += 2
+
+    def _resize(self):
+        """Double the number of buckets and rehash all existing entries.
+
+        Called automatically when load factor exceeds the threshold.
+        This reduces chain length and keeps lookups fast.
+        """
+        old_buckets = self.buckets
+        new_size = self._next_prime(self.size * 2)
+        self.size = new_size
+        self.count = 0
+        self.buckets = [[] for _ in range(new_size)]
+
+        # Rehash every entry into the new, larger bucket array
+        for bucket in old_buckets:
+            for entry in bucket:
+                self.set(entry.key, entry.value)
+
+    def collision_stats(self):
+        """Return a dict with stats about how evenly keys are distributed.
+
+        Useful for diagnosing whether the hash function is spreading
+        keys across buckets or piling them into a few chains.
+        """
+        chain_lengths = [len(b) for b in self.buckets]
+        non_empty = [l for l in chain_lengths if l > 0]
+        collisions = sum(1 for l in chain_lengths if l > 1)
+        return {
+            "total_buckets":    self.size,
+            "used_buckets":     len(non_empty),
+            "empty_buckets":    self.size - len(non_empty),
+            "load_factor":      round(self.load_factor, 3),
+            "max_chain_length": max(chain_lengths) if chain_lengths else 0,
+            "avg_chain_length": round(sum(non_empty) / len(non_empty), 2) if non_empty else 0,
+            "buckets_with_collisions": collisions,
+        }
 
     # Polynomial hash function — converts a string key into a bucket index.
     # Multiplying by 31 spreads characters out to reduce collisions.
@@ -59,6 +122,9 @@ class HashMap:
     def set(self, key, value):
         """Insert a new key-value pair, or update the value if the key exists.
 
+        Automatically resizes the map if the load factor exceeds the
+        threshold after insertion, keeping chain lengths short.
+
         Args:
             key:   The key to store.
             value: The value to associate with the key.
@@ -67,10 +133,14 @@ class HashMap:
         bucket = self.buckets[index]
         for entry in bucket:
             if entry.key == key:
-                entry.value = value    # Key exists — update value
+                entry.value = value    # Key exists -- update value
                 return
-        bucket.append(Entry(key, value))  # Key is new — add to chain
+        bucket.append(Entry(key, value))  # Key is new -- add to chain
         self.count += 1
+
+        # Check if we need to resize
+        if self.load_factor > self.LOAD_FACTOR_THRESHOLD:
+            self._resize()
 
     # Look up a value by key.
     # Hashes the key to find the correct bucket, then searches the chain.
@@ -371,6 +441,19 @@ def seed_inventory():
     add_product("Brownies",          4.00,   20, "Desserts")
 
 
+def print_collision_stats():
+    """Print hash map diagnostic info for inventory and categories maps."""
+    print("\n  [INVENTORY MAP]")
+    stats = inventory.collision_stats()
+    for key, val in stats.items():
+        print(f"     {key:<28} {val}")
+
+    print("\n  [CATEGORIES MAP]")
+    stats = categories.collision_stats()
+    for key, val in stats.items():
+        print(f"     {key:<28} {val}")
+
+
 # ─── Menu Loop ──────────────────────────────────────────────────────
 
 def menu():
@@ -391,6 +474,7 @@ def menu():
         print("  8. View by Category")
         print("  9. Low Stock Report")
         print("  10. Total Inventory Value")
+        print("  11. Hash Map Stats")
         print("  0. Exit")
 
         choice = input("\n  Enter choice: ").strip()
@@ -455,6 +539,9 @@ def menu():
         elif choice == "10":
             total = get_total_value()
             print(f"  Total inventory value: ${total:,.2f}")
+
+        elif choice == "11":
+            print_collision_stats()
 
         elif choice == "0":
             print("  Goodbye!")
