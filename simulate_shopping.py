@@ -1,23 +1,148 @@
 """
 simulate_shopping.py
 ────────────────────
-Simulates random customers shopping at Mini Meijer.
-Customers are generated with demographic profiles (profession, age)
-that determine WHEN they shop (time-of-day weights) and WHAT they buy
-(category preference weights).
-After the simulation, a summary report is printed.
+Simulates a full 7-day week at Mini Meijer (Monday - Sunday).
+Each day runs 4 time blocks with customer counts scaled by a daily
+traffic multiplier.  Delivery trucks arrive from the warehouse on
+Tuesday and Friday mornings.  On Friday, high-inventory items are
+flagged and put on sale for the weekend.  Customers are generated
+with demographic profiles that drive shopping time and category
+preferences.
 """
 
 import random
 import time
 from inventory import (
     seed_inventory, inventory, purchase, restock,
-    print_inventory, get_low_stock, get_total_value
+    print_inventory, get_low_stock, get_total_value, update_price
 )
 
 # ─── Configuration ──────────────────────────────────────────────────
 
-DELAY_BETWEEN = 0.3         # Seconds between customers (for readability)
+DELAY_BETWEEN = 0.15        # Seconds between customers (for readability)
+
+# ─── Week Schedule ─────────────────────────────────────────────────
+
+DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+# Customer traffic multiplier per day (1.0 = normal)
+# Weekends are busier, midweek is slower
+DAY_TRAFFIC = {
+    "Monday":    0.8,
+    "Tuesday":   0.9,
+    "Wednesday": 0.85,
+    "Thursday":  0.95,
+    "Friday":    1.1,
+    "Saturday":  1.4,
+    "Sunday":    1.2,
+}
+
+# ─── Warehouse & Delivery System ──────────────────────────────────
+# The warehouse holds backup stock. Delivery trucks arrive Tuesday
+# and Friday mornings BEFORE the store opens, restocking shelves
+# from the warehouse.
+
+WAREHOUSE_STOCK = {
+    # category: units delivered per truck
+    "Dairy":      60,
+    "Produce":    80,
+    "Meat":       40,
+    "Bakery":     50,
+    "Beverages":  70,
+    "Pantry":     60,
+    "Snacks":     40,
+    "Desserts":   30,
+}
+
+DELIVERY_DAYS = ["Tuesday", "Friday"]   # Trucks arrive these mornings
+
+HIGH_STOCK_THRESHOLD = 40   # Products above this on Friday get sale suggestion
+SALE_DISCOUNT = 0.20        # 20% off suggested sale price
+
+
+def process_delivery(day_name):
+    """Simulate a delivery truck arriving from the warehouse.
+
+    Distributes warehouse stock evenly across products in each category.
+    Only restocks products that are below their original seed quantity.
+
+    Args:
+        day_name: The day of the week (e.g. 'Tuesday').
+    """
+    print(f"\n  {'=' * 55}")
+    print(f"  DELIVERY TRUCK -- {day_name} Morning")
+    print(f"  {'=' * 55}")
+    print(f"  Truck arriving from warehouse...")
+
+    total_units = 0
+
+    for category, units in WAREHOUSE_STOCK.items():
+        # Find all products in this category
+        products_in_cat = [
+            e.value for e in inventory.all_entries()
+            if e.value.category == category
+        ]
+        if not products_in_cat:
+            continue
+
+        # Split delivery evenly across products in the category
+        per_product = units // len(products_in_cat)
+        remainder = units % len(products_in_cat)
+
+        for i, p in enumerate(products_in_cat):
+            amount = per_product + (1 if i < remainder else 0)
+            if amount > 0:
+                p.quantity += amount
+                total_units += amount
+                print(f"    [OK] +{amount} {p.name} (now {p.quantity})")
+
+    print(f"  [OK] Delivery complete: {total_units} total units restocked.")
+    print(f"  {'=' * 55}")
+
+
+def friday_sale_suggestions():
+    """Check inventory for high-stock items and suggest putting them on sale.
+
+    Products with quantity above HIGH_STOCK_THRESHOLD on Friday are
+    flagged. Returns list of (product, suggested_price) tuples.
+    """
+    suggestions = []
+    for entry in inventory.all_entries():
+        p = entry.value
+        if p.quantity >= HIGH_STOCK_THRESHOLD:
+            sale_price = round(p.price * (1 - SALE_DISCOUNT), 2)
+            suggestions.append((p, sale_price))
+    return suggestions
+
+
+def print_sale_suggestions(suggestions):
+    """Print formatted sale suggestions for high-stock Friday items."""
+    if not suggestions:
+        print("\n  [OK] No overstocked items -- no sales needed.")
+        return
+
+    print(f"\n  {'=' * 55}")
+    print(f"  FRIDAY SALE SUGGESTIONS -- {len(suggestions)} items overstocked")
+    print(f"  {'=' * 55}")
+    print(f"  Items above {HIGH_STOCK_THRESHOLD} units should be discounted")
+    print(f"  to move product before the weekend rush.\n")
+    print(f"  {'Name':<20} {'Qty':>5} {'Current':>9} {'Sale Price':>11}  {'Savings':>8}")
+    print(f"  {'-' * 58}")
+    for p, sale_price in suggestions:
+        savings = p.price - sale_price
+        print(f"  {p.name:<20} {p.quantity:>5} ${p.price:>7.2f}  ${sale_price:>8.2f}   -${savings:.2f}")
+
+    return suggestions
+
+
+def apply_sales(suggestions):
+    """Apply the suggested sale prices to products."""
+    for p, sale_price in suggestions:
+        old = p.price
+        p.price = sale_price
+        print(f"  [OK] {p.name}: ${old:.2f} -> ${sale_price:.2f}")
+    print(f"  [OK] {len(suggestions)} items now on sale!")
+
 
 # ─── Time-of-Day Schedule ──────────────────────────────────────────
 # Each block has a label, hours, total customers, and max cart size.
@@ -302,135 +427,218 @@ def get_all_products():
 
 
 def simulate():
-    """Run the full shopping simulation across time-of-day blocks."""
+    """Run a full 7-day (Monday-Sunday) shopping simulation.
+
+    Each day runs through all 4 time blocks with customer counts
+    scaled by the day's traffic multiplier.  Delivery trucks arrive
+    on Tuesday and Friday mornings before the store opens.  On Friday
+    evening, high-inventory items are flagged for sale.
+    """
     # ── Step 1: Load inventory ──────────────────────────────────────
     print("=" * 60)
-    print("  Mini Meijer -- Shopping Simulation")
+    print("  Mini Meijer -- 7-Day Weekly Simulation")
     print("=" * 60)
     print("\n  Loading inventory...")
     seed_inventory()
 
-    # ── Step 2: Snapshot before ──────────────────────────────────────
     value_before = get_total_value()
-    total_customers = sum(block["customers"] for block in TIME_BLOCKS)
     print(f"\n  Starting inventory value: ${value_before:,.2f}")
-    print(f"  Simulating {total_customers} customers across {len(TIME_BLOCKS)} time blocks...\n")
+    print(f"  Simulating 7 days (Monday - Sunday)")
+    print(f"  Deliveries scheduled: {', '.join(DELIVERY_DAYS)}\n")
 
-    total_items_sold = 0
-    total_revenue = 0.0
-    failed_purchases = 0
-    sales_by_product = {}       # Track units sold per product name
-    low_stock_hits = set()      # Track products that hit low stock during simulation
-    sales_by_time_block = {}    # Track revenue per time block
+    # ── Weekly tracking variables ───────────────────────────────────
+    week_items_sold = 0
+    week_revenue = 0.0
+    week_failed = 0
+    week_customers = 0
+    sales_by_product = {}         # product name -> units sold (all week)
+    low_stock_hits = set()        # products that hit low stock at any point
+    sales_by_time_block = {}      # time label -> total revenue across all days
+    sales_by_day = {}             # day name -> revenue
+    customers_by_day = {}         # day name -> customer count
+    deliveries_log = []           # list of (day, total_units) tuples
+    sale_suggestions_applied = [] # products put on sale Friday
     customer_num = 0
 
-    # ── Step 3: Simulate each time block ────────────────────────────
-    for block_index, block in enumerate(TIME_BLOCKS):
-        block_label = block["label"]
-        block_customers = block["customers"]
-        block_max_cart = block["max_cart"]
-        block_revenue = 0.0
+    # ── Step 2: Loop through 7 days ─────────────────────────────────
+    for day_index, day_name in enumerate(DAY_NAMES):
+        traffic = DAY_TRAFFIC[day_name]
+        day_revenue = 0.0
+        day_customers = 0
 
-        print("\n" + "=" * 60)
-        print(f"  TIME BLOCK: {block_label}")
-        print(f"  Hours: {block['hours']}  |  Expected customers: {block_customers}")
-        print("=" * 60)
+        print("\n" + "#" * 60)
+        print(f"  DAY {day_index + 1}: {day_name.upper()}")
+        print(f"  Traffic multiplier: {traffic}x")
+        print("#" * 60)
 
-        for j in range(1, block_customers + 1):
-            customer_num += 1
+        # ── Delivery truck (Tuesday & Friday, before store opens) ──
+        if day_name in DELIVERY_DAYS:
+            process_delivery(day_name)
+            delivered = sum(WAREHOUSE_STOCK.values())
+            deliveries_log.append((day_name, delivered))
 
-            # Pick a shopper profile weighted by time of day
-            profile_name, profile = get_profile_for_time_block(block_index)
-            customer = Customer(profile_name, profile)
-            products = get_all_products()
-
-            if not products:
-                print("  [!] No products left in stock!")
-                break
-
-            # Build cart using the customer's category preferences
-            cart = pick_products_by_preference(products, profile, block_max_cart)
-
-            print(f"\n  Customer #{customer_num}: {customer}")
-
-            customer_total = 0.0
-            customer_items = 0
-
-            for product in cart:
-                qty = random_purchase_amount()
-
-                # Check if purchase will succeed before buying
-                if product.quantity >= qty:
-                    purchase(product.id, qty)
-                    item_cost = product.price * qty
-                    total_items_sold += qty
-                    total_revenue += item_cost
-                    block_revenue += item_cost
-                    customer_total += item_cost
-                    customer_items += qty
-                    # Track sales per product
-                    sales_by_product[product.name] = sales_by_product.get(product.name, 0) + qty
-                    # Track if product hit low stock
-                    if product.quantity <= 10:
-                        low_stock_hits.add(product.name)
+        # ── Friday: suggest sales for overstocked items (before shopping) ──
+        if day_name == "Friday":
+            suggestions = friday_sale_suggestions()
+            if suggestions:
+                print_sale_suggestions(suggestions)
+                approve = input("\n  Apply these sale prices? (y/n): ").strip().lower()
+                if approve == "y":
+                    apply_sales(suggestions)
+                    sale_suggestions_applied = suggestions
                 else:
-                    print(f"    [X] {customer.full_name} wanted {qty}x {product.name} but only {product.quantity} left")
-                    failed_purchases += 1
+                    print("  [--] Sales not applied. Prices unchanged.")
 
-            print(f"  >> {customer.first_name}'s total: {customer_items} items -- ${customer_total:,.2f}")
+        # ── Run each time block for this day ───────────────────────
+        for block_index, block in enumerate(TIME_BLOCKS):
+            block_label = block["label"]
+            # Scale customer count by day traffic, minimum 1
+            block_customers = max(1, int(block["customers"] * traffic))
+            block_max_cart = block["max_cart"]
+            block_revenue = 0.0
 
-            time.sleep(DELAY_BETWEEN)
+            print(f"\n  --- {day_name} | {block_label} "
+                  f"({block_customers} customers) ---")
 
-        sales_by_time_block[block_label] = block_revenue
-        print(f"\n  -- {block_label} revenue: ${block_revenue:,.2f} --")
+            for j in range(1, block_customers + 1):
+                customer_num += 1
+                day_customers += 1
 
-    # ── Step 4: Summary report ──────────────────────────────────────
+                profile_name, profile = get_profile_for_time_block(block_index)
+                customer = Customer(profile_name, profile)
+                products = get_all_products()
+
+                if not products:
+                    print("  [!] No products left in stock!")
+                    break
+
+                cart = pick_products_by_preference(products, profile, block_max_cart)
+
+                print(f"\n  Customer #{customer_num}: {customer}")
+
+                customer_total = 0.0
+                customer_items = 0
+
+                for product in cart:
+                    qty = random_purchase_amount()
+
+                    if product.quantity >= qty:
+                        purchase(product.id, qty)
+                        item_cost = product.price * qty
+                        week_items_sold += qty
+                        week_revenue += item_cost
+                        day_revenue += item_cost
+                        block_revenue += item_cost
+                        customer_total += item_cost
+                        customer_items += qty
+                        sales_by_product[product.name] = (
+                            sales_by_product.get(product.name, 0) + qty
+                        )
+                        if product.quantity <= 10:
+                            low_stock_hits.add(product.name)
+                    else:
+                        print(f"    [X] {customer.full_name} wanted {qty}x "
+                              f"{product.name} but only {product.quantity} left")
+                        week_failed += 1
+
+                print(f"  >> {customer.first_name}'s total: "
+                      f"{customer_items} items -- ${customer_total:,.2f}")
+
+                time.sleep(DELAY_BETWEEN)
+
+            # Accumulate time block revenue across the week
+            sales_by_time_block[block_label] = (
+                sales_by_time_block.get(block_label, 0) + block_revenue
+            )
+
+        # ── End of day summary ──────────────────────────────────────
+        sales_by_day[day_name] = day_revenue
+        customers_by_day[day_name] = day_customers
+        week_customers += day_customers
+
+        low = get_low_stock()
+        print(f"\n  -- End of {day_name} --")
+        print(f"     Revenue: ${day_revenue:,.2f}  |  "
+              f"Customers: {day_customers}  |  "
+              f"Low stock items: {len(low)}")
+
+        # ── End-of-day restock: replenish low items overnight ───────
+        if low:
+            print(f"\n  [OVERNIGHT RESTOCK] {len(low)} low-stock items restocked to 50:")
+            for p in low:
+                restock_amount = 50 - p.quantity
+                if restock_amount > 0:
+                    p.quantity += restock_amount
+                    print(f"    [OK] +{restock_amount} {p.name} (now {p.quantity})")
+        else:
+            print("  [OK] All shelves stocked -- no overnight restock needed.")
+
+    # ── Step 3: Weekly summary ──────────────────────────────────────
     value_after = get_total_value()
 
     print("\n" + "=" * 60)
-    print("  Simulation Summary")
+    print("  WEEKLY SIMULATION SUMMARY (7 Days)")
     print("=" * 60)
-    print(f"  Customers served:       {total_customers}")
-    print(f"  Total items sold:       {total_items_sold}")
-    print(f"  Total revenue:          ${total_revenue:,.2f}")
-    print(f"  Failed purchases:       {failed_purchases}")
-    print(f"  Inventory value before: ${value_before:,.2f}")
-    print(f"  Inventory value after:  ${value_after:,.2f}")
-    print(f"  Value decrease:         ${value_before - value_after:,.2f}")
+    print(f"  Total customers served:  {week_customers}")
+    print(f"  Total items sold:        {week_items_sold}")
+    print(f"  Total revenue:           ${week_revenue:,.2f}")
+    print(f"  Failed purchases:        {week_failed}")
+    print(f"  Inventory value start:   ${value_before:,.2f}")
+    print(f"  Inventory value end:     ${value_after:,.2f}")
+    print(f"  Deliveries received:     {len(deliveries_log)}")
 
-    # Revenue by time block
-    print(f"\n  [SALES BY TIME BLOCK]")
+    # Revenue by day
+    print(f"\n  [REVENUE BY DAY]")
+    for day, rev in sales_by_day.items():
+        pct = (rev / week_revenue * 100) if week_revenue else 0
+        bar = "#" * int(pct / 2)
+        custs = customers_by_day[day]
+        print(f"     {day:<12} ${rev:>8,.2f}  ({pct:4.1f}%)  "
+              f"{custs:>3} customers  {bar}")
+
+    # Revenue by time block (aggregated across all 7 days)
+    print(f"\n  [REVENUE BY TIME BLOCK (weekly total)]")
     for label, rev in sales_by_time_block.items():
-        pct = (rev / total_revenue * 100) if total_revenue else 0
+        pct = (rev / week_revenue * 100) if week_revenue else 0
         bar = "#" * int(pct / 2)
         print(f"     {label:<25} ${rev:>8,.2f}  ({pct:4.1f}%)  {bar}")
 
-    # ── Step 5: Low stock alerts ────────────────────────────────────
+    # Delivery log
+    if deliveries_log:
+        print(f"\n  [DELIVERIES]")
+        for day, units in deliveries_log:
+            print(f"     {day}: {units} units restocked from warehouse")
+
+    # Low stock alerts
     low = get_low_stock()
     if low:
-        print(f"\n  [!] Low Stock Products ({len(low)} items):")
+        print(f"\n  [!] Low Stock Products at End of Week ({len(low)} items):")
         for p in low:
             print(f"     {p.name:<20} -- {p.quantity} left")
 
-    # ── Step 6: Post-simulation options ─────────────────────────────
+    # ── Step 4: Post-simulation menu ────────────────────────────────
     report_data = {
-        "total_revenue": total_revenue,
-        "total_items_sold": total_items_sold,
-        "total_customers": total_customers,
-        "failed_purchases": failed_purchases,
+        "total_revenue": week_revenue,
+        "total_items_sold": week_items_sold,
+        "total_customers": week_customers,
+        "failed_purchases": week_failed,
         "value_before": value_before,
         "value_after": value_after,
         "sales_by_product": sales_by_product,
         "low_stock_hits": low_stock_hits,
         "sales_by_time_block": sales_by_time_block,
+        "sales_by_day": sales_by_day,
+        "customers_by_day": customers_by_day,
+        "deliveries_log": deliveries_log,
+        "sale_suggestions": sale_suggestions_applied,
     }
     post_simulation_menu(report_data)
 
 
 def print_report(data):
-    """Print a detailed report: revenue, most purchased item, and low stock hits."""
+    """Print a detailed weekly report with daily breakdown, deliveries, and sales."""
     print(f"\n{'=' * 60}")
-    print("  Detailed Simulation Report")
+    print("  Detailed Weekly Report")
     print("=" * 60)
 
     # Revenue breakdown
@@ -438,20 +646,46 @@ def print_report(data):
     print(f"     Total revenue:          ${data['total_revenue']:,.2f}")
     print(f"     Total items sold:       {data['total_items_sold']}")
     print(f"     Failed purchases:       {data['failed_purchases']}")
-    print(f"     Inventory value before: ${data['value_before']:,.2f}")
-    print(f"     Inventory value after:  ${data['value_after']:,.2f}")
+    print(f"     Inventory value start:  ${data['value_before']:,.2f}")
+    print(f"     Inventory value end:    ${data['value_after']:,.2f}")
     total_cust = data.get('total_customers', 1)
     avg = data['total_revenue'] / total_cust if total_cust else 0
     print(f"     Avg spend per customer: ${avg:,.2f}")
 
+    # Revenue by day
+    day_sales = data.get("sales_by_day", {})
+    if day_sales:
+        print(f"\n  [REVENUE BY DAY]")
+        custs = data.get("customers_by_day", {})
+        for day, rev in day_sales.items():
+            pct = (rev / data['total_revenue'] * 100) if data['total_revenue'] else 0
+            bar = "#" * int(pct / 2)
+            c = custs.get(day, 0)
+            print(f"     {day:<12} ${rev:>8,.2f}  ({pct:4.1f}%)  "
+                  f"{c:>3} customers  {bar}")
+
     # Sales by time block
     time_sales = data.get("sales_by_time_block", {})
     if time_sales:
-        print(f"\n  [SALES BY TIME BLOCK]")
+        print(f"\n  [REVENUE BY TIME BLOCK (weekly)]")
         for label, rev in time_sales.items():
             pct = (rev / data['total_revenue'] * 100) if data['total_revenue'] else 0
             bar = "#" * int(pct / 2)
             print(f"     {label:<25} ${rev:>8,.2f}  ({pct:4.1f}%)  {bar}")
+
+    # Deliveries
+    deliveries = data.get("deliveries_log", [])
+    if deliveries:
+        print(f"\n  [DELIVERIES]")
+        for day, units in deliveries:
+            print(f"     {day}: {units} units restocked from warehouse")
+
+    # Sale suggestions applied
+    sales_applied = data.get("sale_suggestions", [])
+    if sales_applied:
+        print(f"\n  [FRIDAY SALES APPLIED] ({len(sales_applied)} items discounted)")
+        for p, sale_price in sales_applied:
+            print(f"     {p.name:<20} sale price: ${sale_price:.2f}")
 
     # Most purchased items (top 5)
     sales = data["sales_by_product"]
@@ -460,22 +694,20 @@ def print_report(data):
         print(f"\n  [TOP 5] Most Purchased Items")
         for rank, (name, qty) in enumerate(sorted_sales[:5], 1):
             bar = "\u2588" * qty
-            print(f"     {rank}. {name:<20} — {qty} sold  {bar}")
+            print(f"     {rank}. {name:<20} -- {qty} sold  {bar}")
 
-        # Least purchased
-        print(f"\n  [BOTTOM] Least Purchased Items")
+        print(f"\n  [BOTTOM 3] Least Purchased Items")
         for name, qty in sorted_sales[-3:]:
-            print(f"     {name:<20} — {qty} sold")
+            print(f"     {name:<20} -- {qty} sold")
 
     # Products that hit low stock
     hits = data["low_stock_hits"]
     if hits:
-        print(f"\n  [!] Items That Hit Low Stock During Simulation ({len(hits)}):")
+        print(f"\n  [!] Items That Hit Low Stock ({len(hits)}):")
         for name in sorted(hits):
-            final_qty = sales.get(name, 0)
             print(f"     - {name}")
     else:
-        print(f"\n  [OK] No items hit low stock during the simulation.")
+        print(f"\n  [OK] No items hit low stock during the week.")
 
     print(f"\n{'=' * 60}")
 
