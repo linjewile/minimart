@@ -100,8 +100,6 @@ class HashMap:
             "buckets_with_collisions": collisions,
         }
 
-    # Polynomial hash function — converts a string key into a bucket index.
-    # Multiplying by 31 spreads characters out to reduce collisions.
     def _hash(self, key):
         """Convert a string key into a bucket index using a polynomial hash.
 
@@ -116,9 +114,6 @@ class HashMap:
             total = total * 31 + ord(c)
         return total % self.size
 
-    # Insert or update a key-value pair in the map.
-    # If the key already exists, its value is overwritten.
-    # Otherwise, a new Entry is appended to the bucket's chain.
     def set(self, key, value):
         """Insert a new key-value pair, or update the value if the key exists.
 
@@ -142,9 +137,6 @@ class HashMap:
         if self.load_factor > self.LOAD_FACTOR_THRESHOLD:
             self._resize()
 
-    # Look up a value by key.
-    # Hashes the key to find the correct bucket, then searches the chain.
-    # Returns the value if found, or None if the key doesn't exist.
     def get(self, key):
         """Look up a value by its key.
 
@@ -161,8 +153,6 @@ class HashMap:
                 return entry.value
         return None
 
-    # Remove a key-value pair from the map.
-    # Returns True if the key was found and deleted, False otherwise.
     def delete(self, key):
         """Remove a key-value pair from the map.
 
@@ -181,9 +171,6 @@ class HashMap:
                 return True
         return False
 
-    # Generator that iterates over every entry in the map.
-    # Walks through each bucket and yields each entry in the chain.
-    # Useful for operations that need to scan the entire map (e.g., search, reports).
     def all_entries(self):
         """Yield every Entry in the map by walking all buckets.
 
@@ -238,6 +225,60 @@ inventory = HashMap(97)
 categories = HashMap(31)
 
 
+# ─── Helper Functions ───────────────────────────────────────────────
+
+def _find_product(product_id):
+    """Look up a product by ID, printing an error if not found.
+
+    Args:
+        product_id: The product ID to look up.
+
+    Returns:
+        The Product object, or None if not found.
+    """
+    product = inventory.get(product_id)
+    if product is None:
+        print(f"  [X] Product '{product_id}' not found.")
+    return product
+
+
+def _validate_positive(value, label="Amount"):
+    """Check that a value is positive, printing an error if not.
+
+    Args:
+        value: The number to validate.
+        label: Name shown in the error message.
+
+    Returns:
+        True if valid, False otherwise.
+    """
+    if value <= 0:
+        print(f"  [X] {label} must be positive.")
+        return False
+    return True
+
+
+def get_all_products():
+    """Return a list of every Product currently in the inventory."""
+    return [e.value for e in inventory.all_entries()]
+
+
+def _print_product_list(products, empty_msg="  No products found."):
+    """Print a list of products, or a fallback message if empty.
+
+    Args:
+        products:  List of Product objects.
+        empty_msg: Message to print when the list is empty.
+    """
+    if products:
+        for p in products:
+            print(f"  {p}")
+    else:
+        print(empty_msg)
+
+
+# ─── CRUD Operations ───────────────────────────────────────────────
+
 def add_product(name, price, quantity, category):
     """Add a new product to the inventory.
 
@@ -275,12 +316,8 @@ def purchase(product_id, amount):
         product_id: The ID of the product to purchase.
         amount:     Number of units to buy (must be > 0).
     """
-    product = inventory.get(product_id)
-    if product is None:
-        print(f"  [X] Product '{product_id}' not found.")
-        return
-    if amount <= 0:
-        print("  [X] Amount must be positive.")
+    product = _find_product(product_id)
+    if product is None or not _validate_positive(amount):
         return
     if product.quantity < amount:
         print(f"  [X] Insufficient stock. Available: {product.quantity}")
@@ -298,12 +335,8 @@ def restock(product_id, amount):
         product_id: The ID of the product to restock.
         amount:     Number of units to add (must be > 0).
     """
-    product = inventory.get(product_id)
-    if product is None:
-        print(f"  [X] Product '{product_id}' not found.")
-        return
-    if amount <= 0:
-        print("  [X] Amount must be positive.")
+    product = _find_product(product_id)
+    if product is None or not _validate_positive(amount):
         return
     product.quantity += amount
     print(f"  [OK] Restocked {product.name}. New quantity: {product.quantity}")
@@ -315,9 +348,8 @@ def remove_product(product_id):
     Args:
         product_id: The ID of the product to remove.
     """
-    product = inventory.get(product_id)
+    product = _find_product(product_id)
     if product is None:
-        print(f"  [X] Product '{product_id}' not found.")
         return
     cat_list = categories.get(product.category)
     if cat_list and product_id in cat_list:
@@ -333,9 +365,8 @@ def update_price(product_id, new_price):
         product_id: The ID of the product.
         new_price:  The new price (must be >= 0).
     """
-    product = inventory.get(product_id)
+    product = _find_product(product_id)
     if product is None:
-        print(f"  [X] Product '{product_id}' not found.")
         return
     if new_price < 0:
         print("  [X] Price must be non-negative.")
@@ -357,7 +388,7 @@ def get_products_by_category(category):
     product_ids = categories.get(category)
     if not product_ids:
         return []
-    return [inventory.get(pid) for pid in product_ids if inventory.get(pid)]
+    return [p for pid in product_ids if (p := inventory.get(pid)) is not None]
 
 
 def search_by_name(name):
@@ -369,11 +400,8 @@ def search_by_name(name):
     Returns:
         A list of matching Product objects.
     """
-    results = []
-    for entry in inventory.all_entries():
-        if name.lower() in entry.value.name.lower():
-            results.append(entry.value)
-    return results
+    term = name.lower()
+    return [e.value for e in inventory.all_entries() if term in e.value.name.lower()]
 
 
 def get_low_stock():
@@ -387,6 +415,11 @@ def get_total_value():
     return sum(e.value.price * e.value.quantity for e in inventory.all_entries())
 
 
+def get_total_quantity():
+    """Return the total number of units across all products in the inventory."""
+    return sum(e.value.quantity for e in inventory.all_entries())
+
+
 def print_inventory():
     """Print a formatted table of every product currently in the inventory."""
     if inventory.count == 0:
@@ -396,6 +429,10 @@ def print_inventory():
     print("  " + "-" * 70)
     for entry in inventory.all_entries():
         print(f"  {entry.value}")
+    print("  " + "-" * 70)
+    print(f"  Total Products: {inventory.count}")
+    print(f"  Total Units:    {get_total_quantity()}")
+    print(f"  Total Value:    ${get_total_value():,.2f}")
 
 
 # ─── Seed Inventory ────────────────────────────────────────────────
@@ -403,55 +440,78 @@ def print_inventory():
 def seed_inventory():
     """Manually add starting products to the inventory."""
     # Dairy
-    add_product("Whole Milk",        4.00,  120, "Dairy")
-    add_product("Cheddar Cheese",    6.00,   45, "Dairy")
-    add_product("Greek Yogurt",      4.00,   80, "Dairy")
-    add_product("Butter",            2.00,   60, "Dairy")
+    add_product("Whole Milk",         3.00, 120, "Dairy")
+    add_product("Cheddar Cheese",     2.50,  45, "Dairy")
+    add_product("Greek Yogurt",       2.50,  80, "Dairy")
+    add_product("Butter",             1.75,  60, "Dairy")
     # Produce
-    add_product("Bananas",           0.50,  200, "Produce")
-    add_product("Avocados",          2.50,   60, "Produce")
-    add_product("Baby Spinach",      4.00,   35, "Produce")
-    add_product("Strawberries",      6.00,   40, "Produce")
+    add_product("Bananas",            0.50, 200, "Produce")
+    add_product("Avocados",           2.50,  60, "Produce")
+    add_product("Baby Oranges",       4.00,  35, "Produce")
+    add_product("Strawberries",       3.00,  40, "Produce")
+    add_product("Broccoli",           2.00,  50, "Produce")
+    add_product("Russett Potatoes",   0.79, 130, "Produce")
     # Meat
-    add_product("Chicken Breast",    8.00,   50, "Meat")
-    add_product("Ground Beef",       6.00,   40, "Meat")
-    add_product("Salmon Fillet",    12.00,   25, "Meat")
+    add_product("Chicken Breast",     6.00,  50, "Meat")
+    add_product("Ground Beef",        6.00,  40, "Meat")
+    add_product("Salmon Fillet",      7.50,  25, "Meat")
+    add_product("Glizzy",             4.00,  30, "Meat")
+    add_product("Steak",             10.00,  35, "Meat")
     # Bakery
-    add_product("Sourdough Bread",   4.00,   30, "Bakery")
-    add_product("Croissants",        4.00,   25, "Bakery")
-    add_product("Bagels",            4.00,   50, "Bakery")
+    add_product("Sourdough Bread",    4.00,  30, "Bakery")
+    add_product("Croissants",         4.00,  25, "Bakery")
+    add_product("Bagels",             4.00,  50, "Bakery")
     # Beverages
-    add_product("Orange Juice",      4.00,   55, "Beverages")
-    add_product("Water Case",        4.00,   15, "Beverages")
-    add_product("Sparkling Water",   2.00,  150, "Beverages")
-    add_product("Apple Juice",       4.00,   40, "Beverages")
+    add_product("Orange Juice",       4.00,  55, "Beverages")
+    add_product("Water Case",         4.00,  15, "Beverages")
+    add_product("Sparkling Water",    2.00, 150, "Beverages")
+    add_product("Apple Juice",        4.00,  40, "Beverages")
     # Pantry
-    add_product("Pasta",             2.00,   90, "Pantry")
-    add_product("Olive Oil",         8.00,   20, "Pantry")
-    add_product("Rice",              4.00,   70, "Pantry")
-    add_product("Canned Tomatoes",   2.00,   85, "Pantry")
+    add_product("Pasta",              2.00,  90, "Pantry")
+    add_product("Olive Oil",          8.00,  20, "Pantry")
+    add_product("Rice",               4.00,  70, "Pantry")
+    add_product("Canned Beans",       2.00,  85, "Pantry")
     # Snacks
-    add_product("Granola Bars",      4.00,    8, "Snacks")
-    add_product("Potato Chips",      4.00,   55, "Snacks")
-    add_product("Trail Mix",         6.00,   30, "Snacks")
+    add_product("Granola Bars",       4.00,  30, "Snacks")
+    add_product("Potato Chips",       4.00,  55, "Snacks")
+    add_product("Trail Mix",          6.00,  30, "Snacks")
+    add_product("Gushers",            1.00,  40, "Snacks")
     # Desserts
-    add_product("Chocolate Cake",    8.00,   15, "Desserts")
-    add_product("Ice Cream",         4.00,   40, "Desserts")
-    add_product("Cheesecake",       10.00,   12, "Desserts")
-    add_product("Brownies",          4.00,   20, "Desserts")
+    add_product("Chocolate Cake",     6.00,  15, "Desserts")
+    add_product("Ice Cream",          4.00,  40, "Desserts")
+    add_product("MY Style Strawberry Cheesecake", 7.00, 12, "Desserts")
+    add_product("Brownies",           4.00,  20, "Desserts")
+    add_product("Cookies",            1.50,  30, "Desserts")
+    # Frozen
+    add_product("Frozen Pizza",       5.00,  25, "Frozen")
+    add_product("Frozen Vegetables",  3.00,  60, "Frozen")
+    add_product("TV Dinner",          3.00,  40, "Frozen")
+    add_product("Orange Chicken",     4.00,  30, "Frozen")
+    # Household
+    add_product("Paper Towels",       5.00,  20, "Household")
+    add_product("Toilet Paper",       5.00,  25, "Household")
+    add_product("Laundry Detergent",  6.50,  15, "Household")
+    add_product("Dish Soap",          3.00,  30, "Household")
+    add_product("Trash Bags",         5.00,  20, "Household")
+    add_product("Aluminum Foil",      2.00,  50, "Household")
+
+
+def _print_map_stats(label, hash_map):
+    """Print collision stats for a single hash map.
+
+    Args:
+        label:    Display name for the map (e.g. 'INVENTORY MAP').
+        hash_map: The HashMap instance to report on.
+    """
+    print(f"\n  [{label}]")
+    for key, val in hash_map.collision_stats().items():
+        print(f"     {key:<28} {val}")
 
 
 def print_collision_stats():
     """Print hash map diagnostic info for inventory and categories maps."""
-    print("\n  [INVENTORY MAP]")
-    stats = inventory.collision_stats()
-    for key, val in stats.items():
-        print(f"     {key:<28} {val}")
-
-    print("\n  [CATEGORIES MAP]")
-    stats = categories.collision_stats()
-    for key, val in stats.items():
-        print(f"     {key:<28} {val}")
+    _print_map_stats("INVENTORY MAP", inventory)
+    _print_map_stats("CATEGORIES MAP", categories)
 
 
 # ─── Menu Loop ──────────────────────────────────────────────────────
@@ -511,21 +571,12 @@ def menu():
 
         elif choice == "7":
             name = input("  Search name: ").strip()
-            results = search_by_name(name)
-            if results:
-                for p in results:
-                    print(f"  {p}")
-            else:
-                print("  No matches found.")
+            _print_product_list(search_by_name(name), "  No matches found.")
 
         elif choice == "8":
             cat = input("  Category: ").strip()
-            products = get_products_by_category(cat)
-            if products:
-                for p in products:
-                    print(f"  {p}")
-            else:
-                print("  No products in that category.")
+            _print_product_list(get_products_by_category(cat),
+                                "  No products in that category.")
 
         elif choice == "9":
             low = get_low_stock()

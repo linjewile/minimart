@@ -14,7 +14,8 @@ import random
 import time
 from inventory import (
     seed_inventory, inventory, purchase, restock,
-    print_inventory, get_low_stock, get_total_value, update_price
+    print_inventory, get_low_stock, get_total_value, update_price,
+    get_all_products
 )
 
 # ─── Configuration ──────────────────────────────────────────────────
@@ -56,15 +57,15 @@ WAREHOUSE_STOCK = {
 
 DELIVERY_DAYS = ["Tuesday", "Friday"]   # Trucks arrive these mornings
 
-HIGH_STOCK_THRESHOLD = 40   # Products above this on Friday get sale suggestion
-SALE_DISCOUNT = 0.20        # 20% off suggested sale price
+HIGH_STOCK_THRESHOLD = 50   # Products above this on Friday get sale suggestion
+SALE_DISCOUNT = 0.50        # 50% off suggested sale price
 
 
 def process_delivery(day_name):
     """Simulate a delivery truck arriving from the warehouse.
 
     Distributes warehouse stock evenly across products in each category.
-    Only restocks products that are below their original seed quantity.
+    Only restocks products that have 25 or fewer units remaining.
 
     Args:
         day_name: The day of the week (e.g. 'Tuesday').
@@ -73,19 +74,20 @@ def process_delivery(day_name):
     print(f"  DELIVERY TRUCK -- {day_name} Morning")
     print(f"  {'=' * 55}")
     print(f"  Truck arriving from warehouse...")
+    print(f"  (Only restocking items with 25 or fewer units)")
 
     total_units = 0
 
     for category, units in WAREHOUSE_STOCK.items():
-        # Find all products in this category
+        # Find products in this category that need restocking (qty <= 25)
         products_in_cat = [
             e.value for e in inventory.all_entries()
-            if e.value.category == category
+            if e.value.category == category and e.value.quantity <= 25
         ]
         if not products_in_cat:
             continue
 
-        # Split delivery evenly across products in the category
+        # Split delivery evenly across products that need it
         per_product = units // len(products_in_cat)
         remainder = units % len(products_in_cat)
 
@@ -419,11 +421,6 @@ class Customer:
     def __str__(self):
         return (f"{self.full_name}, Age {self.age}, "
                 f"{self.race}, {self.profession} [{self.shopper_type}]")
-
-
-def get_all_products():
-    """Collect every product currently in the inventory into a list."""
-    return [entry.value for entry in inventory.all_entries()]
 
 
 def simulate():

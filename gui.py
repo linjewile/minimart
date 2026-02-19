@@ -19,12 +19,16 @@ import threading
 from inventory import (
     seed_inventory, inventory, purchase, restock,
     print_inventory, get_low_stock, get_total_value,
-    get_products_by_category, search_by_name, add_product
+    get_products_by_category, search_by_name, add_product,
+    get_all_products
 )
 from simulate_shopping import (
     TIME_BLOCKS, SHOPPER_PROFILES, Customer,
     get_profile_for_time_block, pick_products_by_preference,
-    random_purchase_amount, get_all_products, PROFESSION_TO_PROFILE
+    random_purchase_amount, PROFESSION_TO_PROFILE,
+    DAY_NAMES, DAY_TRAFFIC, DELIVERY_DAYS, WAREHOUSE_STOCK,
+    process_delivery, friday_sale_suggestions, apply_sales,
+    HIGH_STOCK_THRESHOLD, SALE_DISCOUNT
 )
 
 
@@ -82,6 +86,7 @@ class MiniMeijerApp:
         self._build_dashboard_tab()
         self._build_inventory_tab()
         self._build_simulation_tab()
+        self._build_warehouse_tab()
         self._build_low_stock_tab()
         self._build_report_tab()
 
@@ -198,9 +203,10 @@ class MiniMeijerApp:
         stats_config = [
             ("customers",  "Customers Served", "0"),
             ("items_sold", "Items Sold",       "0"),
-            ("revenue",    "Total Revenue",    "$0.00"),
+            ("revenue",    "Week Revenue",     "$0.00"),
             ("failed",     "Failed Purchases", "0"),
             ("inv_value",  "Inventory Value",  "$0.00"),
+            ("deliveries", "Deliveries",       "0"),
         ]
         for key, label, default in stats_config:
             card = tk.Frame(self.dash_stats_frame, bg=BG_CARD, padx=20, pady=15)
@@ -222,6 +228,14 @@ class MiniMeijerApp:
         self.time_block_canvas = tk.Canvas(self.dash_time_frame, bg=BG,
                                             highlightthickness=0, height=180)
         self.time_block_canvas.pack(fill=tk.X, padx=10, pady=5)
+
+        # Daily revenue chart
+        tk.Label(self.dash_time_frame, text="Revenue by Day",
+                 font=FONT_HEADER, bg=BG, fg=ACCENT).pack(anchor=tk.W, padx=10, pady=(10, 5))
+
+        self.day_canvas = tk.Canvas(self.dash_time_frame, bg=BG,
+                                    highlightthickness=0, height=300)
+        self.day_canvas.pack(fill=tk.X, padx=10, pady=5)
 
     # ─── Tab 2: Inventory ───────────────────────────────────────────
 
@@ -296,7 +310,164 @@ class MiniMeijerApp:
         self.sim_text.tag_config("dim",     foreground=FG_DIM)
         self.sim_text.tag_config("customer", foreground=TEAL, font=("Consolas", 10, "bold"))
 
-    # ─── Tab 4: Low Stock ───────────────────────────────────────────
+    # ─── Tab 4: Warehouse ────────────────────────────────────────
+
+    def _build_warehouse_tab(self):
+        """Build the warehouse inventory tab showing stock per category."""
+        frame = tk.Frame(self.notebook, bg=BG)
+        self.notebook.add(frame, text="  Warehouse  ")
+
+        # Header
+        top = tk.Frame(frame, bg=BG)
+        top.pack(fill=tk.X, padx=10, pady=10)
+
+        tk.Label(top, text="Warehouse Inventory",
+                 font=FONT_HEADER, bg=BG, fg=TEAL).pack(side=tk.LEFT)
+
+        tk.Button(top, text="Refresh", font=FONT_BOLD,
+                  bg=ACCENT, fg=BG, relief=tk.FLAT, padx=10,
+                  command=self._refresh_warehouse
+                  ).pack(side=tk.RIGHT)
+
+        # Info bar
+        info = tk.Frame(frame, bg=BG_CARD, padx=15, pady=10)
+        info.pack(fill=tk.X, padx=10, pady=(0, 5))
+
+        tk.Label(info, text="Delivery Schedule:", font=FONT_BOLD,
+                 bg=BG_CARD, fg=FG).pack(side=tk.LEFT)
+        tk.Label(info, text=f"  {', '.join(DELIVERY_DAYS)}  (before store opens)",
+                 font=FONT, bg=BG_CARD, fg=TEAL).pack(side=tk.LEFT)
+
+        self.wh_total_label = tk.Label(info, text="Total per delivery: --",
+                                        font=FONT, bg=BG_CARD, fg=FG_DIM)
+        self.wh_total_label.pack(side=tk.RIGHT)
+
+        # Warehouse stock table
+        cols = ("category", "per_delivery", "products", "per_product")
+        self.wh_tree = ttk.Treeview(frame, columns=cols, show="headings",
+                                     style="Dark.Treeview", height=10)
+        self.wh_tree.heading("category",     text="Category")
+        self.wh_tree.heading("per_delivery", text="Units / Delivery")
+        self.wh_tree.heading("products",     text="Products in Category")
+        self.wh_tree.heading("per_product",  text="Units / Product")
+
+        self.wh_tree.column("category",     width=160, anchor=tk.W)
+        self.wh_tree.column("per_delivery", width=140, anchor=tk.E)
+        self.wh_tree.column("products",     width=160, anchor=tk.E)
+        self.wh_tree.column("per_product",  width=140, anchor=tk.E)
+
+        self.wh_tree.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 5))
+
+        # Daily reports section
+        tk.Label(frame, text="Daily Reports",
+                 font=FONT_HEADER, bg=BG, fg=TEAL
+                 ).pack(anchor=tk.W, padx=10, pady=(10, 5))
+
+        self.delivery_text = scrolledtext.ScrolledText(
+            frame, font=FONT_MONO, bg=BG_CARD, fg=FG,
+            insertbackground=FG, relief=tk.FLAT,
+            wrap=tk.WORD, state=tk.DISABLED, height=12
+        )
+        self.delivery_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+        self.delivery_text.tag_config("header", foreground=ACCENT, font=("Consolas", 10, "bold"))
+        self.delivery_text.tag_config("success", foreground=GREEN)
+        self.delivery_text.tag_config("warning", foreground=YELLOW)
+        self.delivery_text.tag_config("error", foreground=RED)
+        self.delivery_text.tag_config("dim", foreground=FG_DIM)
+        self.delivery_text.tag_config("info", foreground=TEAL)
+
+        # Initial populate
+        self._refresh_warehouse()
+
+    def _refresh_warehouse(self):
+        """Refresh the warehouse stock table with current data."""
+        self.wh_tree.delete(*self.wh_tree.get_children())
+
+        total_units = 0
+        for i, (category, units) in enumerate(WAREHOUSE_STOCK.items()):
+            # Count products in this category currently in inventory
+            products_in_cat = [
+                e.value for e in inventory.all_entries()
+                if e.value.category == category
+            ]
+            num_products = len(products_in_cat)
+            per_product = units // num_products if num_products > 0 else 0
+            total_units += units
+
+            tag = "alt" if i % 2 else ""
+            self.wh_tree.insert("", tk.END, values=(
+                category, units, num_products,
+                per_product if num_products > 0 else "N/A"
+            ), tags=(tag,))
+
+        self.wh_tree.tag_configure("alt", background=ROW_ALT)
+        self.wh_total_label.config(text=f"Total per delivery: {total_units} units")
+
+    def _refresh_delivery_history(self):
+        """Update the daily reports section with per-day summaries."""
+        dt = self.delivery_text
+        dt.configure(state=tk.NORMAL)
+        dt.delete("1.0", tk.END)
+
+        if not self.report_data or not self.report_data.get("daily_reports"):
+            dt.insert(tk.END, "  No daily reports yet. Run a simulation to see results.", "dim")
+            dt.configure(state=tk.DISABLED)
+            return
+
+        reports = self.report_data["daily_reports"]
+        week_rev = 0
+        week_cust = 0
+        week_items = 0
+        week_delivered = 0
+        week_restocked = 0
+
+        for rpt in reports:
+            day = rpt["day"]
+            rev = rpt["revenue"]
+            cust = rpt["customers"]
+            items = rpt["items_sold"]
+            failed = rpt["failed"]
+            delivered = rpt["delivered"]
+            restocked = rpt["restocked"]
+            inv_val = rpt["inv_value"]
+            low_count = rpt["low_stock_count"]
+
+            week_rev += rev
+            week_cust += cust
+            week_items += items
+            week_delivered += delivered
+            week_restocked += restocked
+
+            dt.insert(tk.END, f"  {'=' * 52}\n", "dim")
+            dt.insert(tk.END, f"  {day.upper()} -- End-of-Day Report\n", "header")
+            dt.insert(tk.END, f"  {'=' * 52}\n", "dim")
+            dt.insert(tk.END, f"  Customers:      {cust}\n", "info")
+            dt.insert(tk.END, f"  Items Sold:     {items}\n", "info")
+            dt.insert(tk.END, f"  Revenue:        ${rev:,.2f}\n", "success")
+            if failed > 0:
+                dt.insert(tk.END, f"  Failed Buys:    {failed}\n", "error")
+            if delivered > 0:
+                dt.insert(tk.END, f"  Delivery:       +{delivered} units\n", "warning")
+            if restocked > 0:
+                dt.insert(tk.END, f"  Overnight Restock: +{restocked} units\n", "warning")
+            dt.insert(tk.END, f"  Inventory Value: ${inv_val:,.2f}\n", "dim")
+            if low_count > 0:
+                dt.insert(tk.END, f"  Low Stock Items: {low_count}\n", "error")
+            dt.insert(tk.END, "\n")
+
+        # Weekly totals
+        dt.insert(tk.END, f"  {'#' * 52}\n", "header")
+        dt.insert(tk.END, f"  WEEKLY TOTALS\n", "header")
+        dt.insert(tk.END, f"  {'#' * 52}\n", "header")
+        dt.insert(tk.END, f"  Total Customers:   {week_cust}\n", "info")
+        dt.insert(tk.END, f"  Total Items Sold:  {week_items}\n", "info")
+        dt.insert(tk.END, f"  Total Revenue:     ${week_rev:,.2f}\n", "success")
+        dt.insert(tk.END, f"  Total Delivered:   {week_delivered} units\n", "warning")
+        dt.insert(tk.END, f"  Total Restocked:   {week_restocked} units\n", "warning")
+
+        dt.configure(state=tk.DISABLED)
+
+    # ─── Tab 5: Low Stock ─────────────────────────────────────────
 
     def _build_low_stock_tab(self):
         """Build the low stock alerts tab."""
@@ -387,115 +558,237 @@ class MiniMeijerApp:
         thread.start()
 
     def _run_simulation(self):
-        """The simulation logic — runs on a background thread."""
+        """Run the full 7-day weekly simulation on a background thread."""
         value_before = get_total_value()
-        total_customers = sum(b["customers"] for b in TIME_BLOCKS)
 
         self._log("=" * 58 + "\n", "header")
-        self._log("  Mini Meijer -- Shopping Simulation\n", "header")
+        self._log("  Mini Meijer -- 7-Day Weekly Simulation\n", "header")
         self._log("=" * 58 + "\n\n", "header")
         self._log(f"  Starting inventory value: ${value_before:,.2f}\n", "info")
-        self._log(f"  Simulating {total_customers} customers across "
-                  f"{len(TIME_BLOCKS)} time blocks...\n\n", "dim")
+        self._log(f"  Deliveries scheduled: {', '.join(DELIVERY_DAYS)}\n\n", "dim")
 
-        total_items_sold = 0
-        total_revenue = 0.0
-        failed_purchases = 0
+        week_items_sold = 0
+        week_revenue = 0.0
+        week_failed = 0
+        week_customers = 0
         sales_by_product = {}
         low_stock_hits = set()
         sales_by_time_block = {}
+        sales_by_day = {}
+        customers_by_day = {}
+        deliveries_log = []
+        sale_suggestions_applied = []
         customer_num = 0
-        profile_counts = {}       # Track how many of each profile appeared
+        profile_counts = {}
 
-        for block_index, block in enumerate(TIME_BLOCKS):
-            block_label = block["label"]
-            block_customers = block["customers"]
-            block_max_cart = block["max_cart"]
-            block_revenue = 0.0
+        daily_reports = []
 
-            self._log("\n" + "=" * 58 + "\n", "header")
-            self._log(f"  TIME BLOCK: {block_label}\n", "header")
-            self._log(f"  Hours: {block['hours']}  |  "
-                      f"Expected customers: {block_customers}\n", "dim")
-            self._log("=" * 58 + "\n", "header")
+        for day_index, day_name in enumerate(DAY_NAMES):
+            traffic = DAY_TRAFFIC[day_name]
+            day_revenue = 0.0
+            day_customers = 0
+            day_items_sold = 0
+            day_failed = 0
+            day_delivered = 0
 
-            for j in range(1, block_customers + 1):
-                customer_num += 1
+            self._log("\n" + "#" * 58 + "\n", "header")
+            self._log(f"  DAY {day_index + 1}: {day_name.upper()}  "
+                      f"(traffic: {traffic}x)\n", "header")
+            self._log("#" * 58 + "\n", "header")
 
-                profile_name, profile = get_profile_for_time_block(block_index)
-                customer = Customer(profile_name, profile)
-                products = get_all_products()
+            # ── Delivery truck ──────────────────────────────────────
+            if day_name in DELIVERY_DAYS:
+                self._log(f"\n  DELIVERY TRUCK -- {day_name} Morning\n", "warning")
+                self._log(f"  (Only restocking items with 25 or fewer units)\n", "dim")
+                total_delivered = 0
+                for category, units in WAREHOUSE_STOCK.items():
+                    products_in_cat = [
+                        e.value for e in inventory.all_entries()
+                        if e.value.category == category
+                            and e.value.quantity <= 25
+                    ]
+                    if not products_in_cat:
+                        continue
+                    per_product = units // len(products_in_cat)
+                    remainder = units % len(products_in_cat)
+                    for i, p in enumerate(products_in_cat):
+                        amount = per_product + (1 if i < remainder else 0)
+                        if amount > 0:
+                            p.quantity += amount
+                            total_delivered += amount
+                            self._log(f"    [OK] +{amount} {p.name} "
+                                      f"(now {p.quantity})\n", "success")
+                day_delivered = total_delivered
+                deliveries_log.append((day_name, total_delivered))
+                self._log(f"  [OK] Delivery complete: {total_delivered} units\n", "info")
 
-                # Track profile distribution
-                profile_counts[profile_name] = profile_counts.get(profile_name, 0) + 1
+            # ── Friday sale suggestions (popup in GUI) ──────────────
+            if day_name == "Friday":
+                suggestions = friday_sale_suggestions()
+                if suggestions:
+                    self._log(f"\n  FRIDAY SALE SUGGESTIONS -- "
+                              f"{len(suggestions)} overstocked items\n", "warning")
+                    for p, sale_price in suggestions:
+                        self._log(f"    {p.name:<20} Qty: {p.quantity:>4}  "
+                                  f"${p.price:.2f} -> ${sale_price:.2f}\n", "warning")
 
-                if not products:
-                    self._log("  [!] No products left in stock!\n", "error")
-                    break
+                    # Ask user via popup on the main thread
+                    self._sale_suggestions = suggestions
+                    self._sale_approved = None
+                    self.root.after(0, self._show_sale_popup)
+                    # Wait for user response
+                    while self._sale_approved is None:
+                        time.sleep(0.1)
 
-                cart = pick_products_by_preference(products, profile, block_max_cart)
-
-                self._log(f"\n  Customer #{customer_num}: ", "customer")
-                self._log(f"{customer}\n", "info")
-
-                customer_total = 0.0
-                customer_items = 0
-
-                for product in cart:
-                    qty = random_purchase_amount()
-
-                    if product.quantity >= qty:
-                        purchase(product.id, qty)
-                        item_cost = product.price * qty
-                        total_items_sold += qty
-                        total_revenue += item_cost
-                        block_revenue += item_cost
-                        customer_total += item_cost
-                        customer_items += qty
-                        sales_by_product[product.name] = (
-                            sales_by_product.get(product.name, 0) + qty
-                        )
-                        if product.quantity <= 10:
-                            low_stock_hits.add(product.name)
-
-                        self._log(f"    [OK] {qty}x {product.name} "
-                                  f"(${item_cost:.2f})  -- {product.quantity} left\n", "success")
+                    if self._sale_approved:
+                        apply_sales(suggestions)
+                        sale_suggestions_applied = suggestions
+                        self._log("  [OK] Sale prices applied!\n", "success")
                     else:
-                        self._log(f"    [X] Wanted {qty}x {product.name} "
-                                  f"but only {product.quantity} left\n", "error")
-                        failed_purchases += 1
+                        self._log("  [--] Sales not applied.\n", "dim")
 
-                self._log(f"  >> {customer.first_name}'s total: "
-                          f"{customer_items} items -- ${customer_total:,.2f}\n", "dim")
+            # ── Time blocks for this day ────────────────────────────
+            for block_index, block in enumerate(TIME_BLOCKS):
+                block_label = block["label"]
+                block_customers = max(1, int(block["customers"] * traffic))
+                block_max_cart = block["max_cart"]
+                block_revenue = 0.0
 
-                time.sleep(0.15)  # Brief pause for readability
+                self._log(f"\n  --- {day_name} | {block_label} "
+                          f"({block_customers} customers) ---\n", "dim")
 
-            sales_by_time_block[block_label] = block_revenue
-            self._log(f"\n  -- {block_label} revenue: ${block_revenue:,.2f} --\n", "info")
+                for j in range(1, block_customers + 1):
+                    customer_num += 1
+                    day_customers += 1
 
-        # Summary
+                    profile_name, profile = get_profile_for_time_block(block_index)
+                    customer = Customer(profile_name, profile)
+                    products = get_all_products()
+
+                    profile_counts[profile_name] = profile_counts.get(profile_name, 0) + 1
+
+                    if not products:
+                        self._log("  [!] No products left in stock!\n", "error")
+                        break
+
+                    cart = pick_products_by_preference(products, profile, block_max_cart)
+
+                    self._log(f"\n  #{customer_num}: ", "customer")
+                    self._log(f"{customer}\n", "info")
+
+                    customer_total = 0.0
+                    customer_items = 0
+
+                    for product in cart:
+                        qty = random_purchase_amount()
+
+                        if product.quantity >= qty:
+                            purchase(product.id, qty)
+                            item_cost = product.price * qty
+                            week_items_sold += qty
+                            day_items_sold += qty
+                            week_revenue += item_cost
+                            day_revenue += item_cost
+                            block_revenue += item_cost
+                            customer_total += item_cost
+                            customer_items += qty
+                            sales_by_product[product.name] = (
+                                sales_by_product.get(product.name, 0) + qty
+                            )
+                            if product.quantity <= 10:
+                                low_stock_hits.add(product.name)
+
+                            self._log(f"    [OK] {qty}x {product.name} "
+                                      f"(${item_cost:.2f})\n", "success")
+                        else:
+                            self._log(f"    [X] Wanted {qty}x {product.name} "
+                                      f"but only {product.quantity} left\n", "error")
+                            week_failed += 1
+                            day_failed += 1
+
+                    self._log(f"  >> {customer.first_name}: "
+                              f"{customer_items} items -- ${customer_total:,.2f}\n", "dim")
+
+                    time.sleep(0.05)  # Faster for 7 days
+
+                sales_by_time_block[block_label] = (
+                    sales_by_time_block.get(block_label, 0) + block_revenue
+                )
+
+            # ── End of day ──────────────────────────────────────────
+            sales_by_day[day_name] = day_revenue
+            customers_by_day[day_name] = day_customers
+            week_customers += day_customers
+
+            # Overnight restock
+            day_restocked = 0
+            low = get_low_stock()
+            if low:
+                self._log(f"\n  [OVERNIGHT RESTOCK] {len(low)} items restocked to 50:\n", "warning")
+                for p in low:
+                    restock_amount = 50 - p.quantity
+                    if restock_amount > 0:
+                        p.quantity += restock_amount
+                        day_restocked += restock_amount
+                        self._log(f"    [OK] +{restock_amount} {p.name} "
+                                  f"(now {p.quantity})\n", "success")
+
+            self._log(f"\n  -- End of {day_name}: ${day_revenue:,.2f} revenue, "
+                      f"{day_customers} customers --\n", "info")
+
+            # Build daily report for warehouse tab
+            low_stock_count = len(get_low_stock())
+            daily_reports.append({
+                "day":             day_name,
+                "revenue":         day_revenue,
+                "customers":       day_customers,
+                "items_sold":      day_items_sold,
+                "failed":          day_failed,
+                "delivered":       day_delivered,
+                "restocked":       day_restocked,
+                "inv_value":       get_total_value(),
+                "low_stock_count": low_stock_count,
+            })
+
+        # ── Week complete ───────────────────────────────────────────
         value_after = get_total_value()
 
         self._log("\n" + "=" * 58 + "\n", "header")
-        self._log("  Simulation Complete!\n", "header")
+        self._log("  Weekly Simulation Complete!\n", "header")
         self._log("=" * 58 + "\n", "header")
 
-        # Store report data
         self.report_data = {
-            "total_revenue":      total_revenue,
-            "total_items_sold":   total_items_sold,
-            "total_customers":    total_customers,
-            "failed_purchases":   failed_purchases,
-            "value_before":       value_before,
-            "value_after":        value_after,
-            "sales_by_product":   sales_by_product,
-            "low_stock_hits":     low_stock_hits,
+            "total_revenue":       week_revenue,
+            "total_items_sold":    week_items_sold,
+            "total_customers":     week_customers,
+            "failed_purchases":    week_failed,
+            "value_before":        value_before,
+            "value_after":         value_after,
+            "sales_by_product":    sales_by_product,
+            "low_stock_hits":      low_stock_hits,
             "sales_by_time_block": sales_by_time_block,
-            "profile_counts":     profile_counts,
+            "sales_by_day":        sales_by_day,
+            "customers_by_day":    customers_by_day,
+            "deliveries_log":      deliveries_log,
+            "daily_reports":       daily_reports,
+            "sale_suggestions":    sale_suggestions_applied,
+            "profile_counts":      profile_counts,
         }
 
-        # Update all tabs from main thread
         self.root.after(0, self._update_after_simulation)
+
+    def _show_sale_popup(self):
+        """Show a popup asking user to approve Friday sale prices."""
+        suggestions = self._sale_suggestions
+        msg = "The following items are overstocked and should go on sale:\n\n"
+        for p, sale_price in suggestions:
+            savings = p.price - sale_price
+            msg += f"  {p.name}: {p.quantity} units -- "
+            msg += f"${p.price:.2f} -> ${sale_price:.2f} (-${savings:.2f})\n"
+        msg += "\nApply these sale prices?"
+
+        result = messagebox.askyesno("Friday Sale Suggestions", msg)
+        self._sale_approved = result
 
     def _update_after_simulation(self):
         """Update all GUI elements after the simulation completes."""
@@ -516,13 +809,24 @@ class MiniMeijerApp:
             fg=RED if data["failed_purchases"] > 0 else GREEN
         )
         self.stat_cards["inv_value"].config(text=f"${data['value_after']:,.2f}")
+        self.stat_cards["deliveries"].config(
+            text=str(len(data.get("deliveries_log", []))),
+            fg=TEAL
+        )
 
         # Draw time block bars
         self._draw_time_blocks(data["sales_by_time_block"], data["total_revenue"])
 
+        # Draw daily revenue bars
+        self._draw_daily_revenue(data.get("sales_by_day", {}),
+                                 data.get("customers_by_day", {}),
+                                 data["total_revenue"])
+
         # Refresh tables
         self._refresh_inventory_table()
         self._refresh_low_stock()
+        self._refresh_warehouse()
+        self._refresh_delivery_history()
 
         # Build report
         self._build_report_text(data)
@@ -567,6 +871,42 @@ class MiniMeijerApp:
                                anchor=tk.W, fill=FG_DIM, font=FONT_SMALL)
 
             y += bar_height + 8
+
+    def _draw_daily_revenue(self, day_sales, day_customers, total_revenue):
+        """Draw horizontal bar chart for revenue by day of week."""
+        canvas = self.day_canvas
+        canvas.delete("all")
+
+        if not day_sales or total_revenue == 0:
+            return
+
+        canvas_width = canvas.winfo_width() or 900
+        bar_height = 30
+        y = 10
+        max_rev = max(day_sales.values()) if day_sales else 1
+        day_colors = [ACCENT, TEAL, PURPLE, FG_DIM, YELLOW, GREEN, RED]
+
+        for i, (day, rev) in enumerate(day_sales.items()):
+            pct = (rev / total_revenue * 100) if total_revenue else 0
+            bar_width = int((rev / max_rev) * (canvas_width - 400))
+            custs = day_customers.get(day, 0)
+            color = day_colors[i % len(day_colors)]
+
+            # Day label
+            canvas.create_text(10, y + bar_height // 2, text=day,
+                               anchor=tk.W, fill=FG, font=FONT_SMALL)
+
+            # Bar
+            x_start = 100
+            canvas.create_rectangle(x_start, y + 3, x_start + bar_width, y + bar_height - 3,
+                                     fill=color, outline="")
+
+            # Value + customer count
+            canvas.create_text(x_start + bar_width + 8, y + bar_height // 2,
+                               text=f"${rev:,.2f} ({pct:.1f}%)  --  {custs} customers",
+                               anchor=tk.W, fill=FG_DIM, font=FONT_SMALL)
+
+            y += bar_height + 6
 
     def _refresh_inventory_table(self):
         """Reload the inventory treeview with current data."""
@@ -645,7 +985,7 @@ class MiniMeijerApp:
         rt.delete("1.0", tk.END)
 
         rt.insert(tk.END, "=" * 55 + "\n", "header")
-        rt.insert(tk.END, "  DETAILED SIMULATION REPORT\n", "header")
+        rt.insert(tk.END, "  DETAILED WEEKLY REPORT\n", "header")
         rt.insert(tk.END, "=" * 55 + "\n\n", "header")
 
         # Revenue section
@@ -660,12 +1000,26 @@ class MiniMeijerApp:
             f"  Inventory after:        ${data['value_after']:,.2f}",
             f"  Value decrease:         ${data['value_before'] - data['value_after']:,.2f}",
             f"  Avg spend / customer:   ${avg:,.2f}",
+            f"  Deliveries received:    {len(data.get('deliveries_log', []))}",
         ]
         for line in lines:
             rt.insert(tk.END, line + "\n")
 
+        # Revenue by day
+        day_sales = data.get("sales_by_day", {})
+        if day_sales:
+            rt.insert(tk.END, "\n  REVENUE BY DAY\n", "info")
+            rt.insert(tk.END, "  " + "-" * 40 + "\n", "dim")
+            custs = data.get("customers_by_day", {})
+            for day, rev in day_sales.items():
+                pct = (rev / data['total_revenue'] * 100) if data['total_revenue'] else 0
+                c = custs.get(day, 0)
+                bar = "#" * int(pct / 2)
+                rt.insert(tk.END, f"  {day:<12} ${rev:>8,.2f}  ({pct:4.1f}%)  "
+                                  f"{c:>3} cust  {bar}\n")
+
         # Time block breakdown
-        rt.insert(tk.END, "\n  SALES BY TIME BLOCK\n", "info")
+        rt.insert(tk.END, "\n  REVENUE BY TIME BLOCK (weekly)\n", "info")
         rt.insert(tk.END, "  " + "-" * 40 + "\n", "dim")
         for label, rev in data["sales_by_time_block"].items():
             pct = (rev / data["total_revenue"] * 100) if data["total_revenue"] else 0
@@ -702,6 +1056,22 @@ class MiniMeijerApp:
             rt.insert(tk.END, "  " + "-" * 40 + "\n", "dim")
             for name in sorted(hits):
                 rt.insert(tk.END, f"  - {name}\n", "warning")
+
+        # Deliveries
+        deliveries = data.get("deliveries_log", [])
+        if deliveries:
+            rt.insert(tk.END, f"\n  DELIVERIES\n", "info")
+            rt.insert(tk.END, "  " + "-" * 40 + "\n", "dim")
+            for day, units in deliveries:
+                rt.insert(tk.END, f"  {day}: {units} units from warehouse\n")
+
+        # Friday sales
+        sale_items = data.get("sale_suggestions", [])
+        if sale_items:
+            rt.insert(tk.END, f"\n  FRIDAY SALES APPLIED ({len(sale_items)} items)\n", "info")
+            rt.insert(tk.END, "  " + "-" * 40 + "\n", "dim")
+            for p, sale_price in sale_items:
+                rt.insert(tk.END, f"  {p.name:<20} sale: ${sale_price:.2f}\n", "success")
 
         rt.insert(tk.END, "\n" + "=" * 55 + "\n", "header")
         rt.configure(state=tk.DISABLED)
