@@ -628,8 +628,8 @@ class MiniMeijerApp:
             if day_name == "Friday":
                 suggestions = friday_sale_suggestions()
                 if suggestions:
-                    self._log(f"\n  FRIDAY SALE SUGGESTIONS -- "
-                              f"{len(suggestions)} overstocked items\n", "warning")
+                    self._log(f"\n  FRIDAY SALE -- TOP {len(suggestions)} "
+                              f"OVERSTOCKED ITEMS\n", "warning")
                     for p, sale_price in suggestions:
                         self._log(f"    {p.name:<20} Qty: {p.quantity:>4}  "
                                   f"${p.price:.2f} -> ${sale_price:.2f}\n", "warning")
@@ -782,14 +782,14 @@ class MiniMeijerApp:
     def _show_sale_popup(self):
         """Show a popup asking user to approve Friday sale prices."""
         suggestions = self._sale_suggestions
-        msg = "The following items are overstocked and should go on sale:\n\n"
-        for p, sale_price in suggestions:
+        msg = f"Top {len(suggestions)} most overstocked items to put on sale:\n\n"
+        for i, (p, sale_price) in enumerate(suggestions, 1):
             savings = p.price - sale_price
-            msg += f"  {p.name}: {p.quantity} units -- "
+            msg += f"  {i}. {p.name}: {p.quantity} units -- "
             msg += f"${p.price:.2f} -> ${sale_price:.2f} (-${savings:.2f})\n"
         msg += "\nApply these sale prices?"
 
-        result = messagebox.askyesno("Friday Sale Suggestions", msg)
+        result = messagebox.askyesno("Friday Sale -- Top 5", msg)
         self._sale_approved = result
 
     def _update_after_simulation(self):

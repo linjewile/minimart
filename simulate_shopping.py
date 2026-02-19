@@ -122,15 +122,17 @@ def friday_sale_suggestions():
     """Check inventory for high-stock items and suggest putting them on sale.
 
     Products with quantity above HIGH_STOCK_THRESHOLD on Friday are
-    flagged. Returns list of (product, suggested_price) tuples.
+    flagged. Returns the top 5 most overstocked as (product, suggested_price) tuples.
     """
-    suggestions = []
+    candidates = []
     for entry in inventory.all_entries():
         p = entry.value
         if p.quantity >= HIGH_STOCK_THRESHOLD:
             sale_price = round(p.price * (1 - SALE_DISCOUNT), 2)
-            suggestions.append((p, sale_price))
-    return suggestions
+            candidates.append((p, sale_price))
+    # Return only the top 5 most overstocked items
+    candidates.sort(key=lambda x: x[0].quantity, reverse=True)
+    return candidates[:5]
 
 
 def print_sale_suggestions(suggestions):
@@ -140,9 +142,9 @@ def print_sale_suggestions(suggestions):
         return
 
     print(f"\n  {'=' * 55}")
-    print(f"  FRIDAY SALE SUGGESTIONS -- {len(suggestions)} items overstocked")
+    print(f"  FRIDAY SALE -- TOP {len(suggestions)} OVERSTOCKED ITEMS")
     print(f"  {'=' * 55}")
-    print(f"  Items above {HIGH_STOCK_THRESHOLD} units should be discounted")
+    print(f"  Highest-stock items (above {HIGH_STOCK_THRESHOLD} units) discounted")
     print(f"  to move product before the weekend rush.\n")
     print(f"  {'Name':<20} {'Qty':>5} {'Current':>9} {'Sale Price':>11}  {'Savings':>8}")
     print(f"  {'-' * 58}")
