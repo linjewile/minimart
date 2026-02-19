@@ -76,6 +76,7 @@ class MiniMeijerApp:
         self.sim_log = []            # List of log strings
         self.report_data = None      # Dict of report stats
         self.sim_running = False
+        self.sim_speed = tk.IntVar(value=10)  # Speed level 1-20 (10 = default)
 
         # Style configuration
         self._setup_styles()
@@ -85,16 +86,20 @@ class MiniMeijerApp:
 
         # Notebook (tabs)
         self.notebook = ttk.Notebook(self.root, style="Dark.TNotebook")
-        self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+        self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 0))
 
         # Build each tab
         self._build_dashboard_tab()
+        self._build_blueprint_tab()
         self._build_inventory_tab()
         self._build_simulation_tab()
         self._build_warehouse_tab()
         self._build_activity_tab()
         self._build_low_stock_tab()
         self._build_report_tab()
+
+        # Bottom inventory status bar
+        self._build_bottom_bar()
 
     # ─── Styles ─────────────────────────────────────────────────────
 
@@ -188,6 +193,26 @@ class MiniMeijerApp:
         )
         self.load_btn.pack(side=tk.RIGHT, padx=(0, 10))
 
+        # Speed control slider
+        speed_frame = tk.Frame(header, bg=BG)
+        speed_frame.pack(side=tk.RIGHT, padx=(0, 20))
+
+        tk.Label(speed_frame, text="Sim Speed:", font=FONT_SMALL,
+                 bg=BG, fg=FG_DIM).pack(side=tk.LEFT)
+
+        self.speed_label = tk.Label(speed_frame, text="10x", font=FONT_BOLD,
+                                    bg=BG, fg=TEAL, width=4)
+        self.speed_label.pack(side=tk.RIGHT, padx=(4, 0))
+
+        self.speed_slider = tk.Scale(
+            speed_frame, from_=1, to=20, orient=tk.HORIZONTAL,
+            variable=self.sim_speed, showvalue=False,
+            bg=BG, fg=FG, troughcolor=BG_CARD, highlightthickness=0,
+            activebackground=TEAL, sliderrelief=tk.FLAT, length=120,
+            command=lambda v: self.speed_label.config(text=f"{v}x")
+        )
+        self.speed_slider.pack(side=tk.LEFT, padx=(4, 0))
+
     # ─── Tab 1: Dashboard ───────────────────────────────────────────
 
     def _build_dashboard_tab(self):
@@ -243,7 +268,188 @@ class MiniMeijerApp:
                                     highlightthickness=0, height=300)
         self.day_canvas.pack(fill=tk.X, padx=10, pady=5)
 
-    # ─── Tab 2: Inventory ───────────────────────────────────────────
+    # ─── Tab 2: Store Blueprint ─────────────────────────────────────
+
+    # Blueprint colour constants
+    BP_BG       = "#0a1929"
+    BP_GRID     = "#0f2640"
+    BP_BORDER   = "#4a9eff"
+    BP_SECTION  = "#132f4c"
+    BP_TEXT     = "#e3f2fd"
+    BP_DIM      = "#5c8ab5"
+    BP_ENTRANCE = "#1a3d5c"
+
+    # Store floor plan: (row, col, category_name)
+    STORE_SECTIONS = [
+        (0, 0, "Produce"),    (0, 1, "Dairy"),              (0, 2, "Meat"),
+        (1, 0, "Bakery"),     (1, 1, "Beverages"),          (1, 2, "Pantry"),
+        (2, 0, "Snacks"),     (2, 1, "Desserts"),           (2, 2, "Frozen"),
+        (3, 0, "Household"),  (3, 1, "Kitchen Appliances"), (3, 2, "Alcohol"),
+    ]
+
+    def _build_blueprint_tab(self):
+        """Build the store blueprint floor plan tab."""
+        frame = tk.Frame(self.notebook, bg=self.BP_BG)
+        self.notebook.add(frame, text="  Store Map  ")
+
+        self.bp_canvas = tk.Canvas(frame, bg=self.BP_BG, highlightthickness=0)
+        self.bp_canvas.pack(fill=tk.BOTH, expand=True)
+
+        # Redraw on resize
+        self.bp_canvas.bind("<Configure>", lambda e: self._refresh_blueprint())
+
+    def _refresh_blueprint(self):
+        """Redraw the store blueprint with current inventory quantities."""
+        canvas = self.bp_canvas
+        canvas.delete("all")
+
+        w = canvas.winfo_width()
+        h = canvas.winfo_height()
+        if w < 200 or h < 200:
+            return
+
+        # ── Grid pattern (blueprint aesthetic) ─────────────────────
+        for gx in range(0, w, 25):
+            canvas.create_line(gx, 0, gx, h, fill=self.BP_GRID)
+        for gy in range(0, h, 25):
+            canvas.create_line(0, gy, w, gy, fill=self.BP_GRID)
+
+        # ── Layout geometry ────────────────────────────────────────
+        margin = 30
+        title_h = 40
+        entrance_h = 34
+        legend_h = 28
+        store_x = margin
+        store_y = margin + title_h
+        store_w = w - 2 * margin
+        checkout_frac = 0.17
+        product_w = store_w * (1 - checkout_frac)
+        checkout_w = store_w * checkout_frac
+        col_w = product_w / 3
+        body_h = h - 2 * margin - title_h - entrance_h - legend_h
+        row_h = body_h / 4
+
+        # ── Title ──────────────────────────────────────────────────
+        canvas.create_text(w / 2, margin + title_h / 2,
+                           text="MINI MEIJER \u2014 STORE BLUEPRINT",
+                           fill=self.BP_TEXT,
+                           font=("Consolas", 14, "bold"))
+
+        # ── Entrance banner ────────────────────────────────────────
+        ent_y = store_y
+        canvas.create_rectangle(store_x, ent_y,
+                                store_x + store_w, ent_y + entrance_h,
+                                fill=self.BP_ENTRANCE, outline=self.BP_BORDER,
+                                width=2)
+        canvas.create_text(store_x + store_w / 2, ent_y + entrance_h / 2,
+                           text="\u25B6  ENTRANCE / EXIT  \u25C0",
+                           fill=self.BP_TEXT,
+                           font=("Consolas", 11, "bold"))
+
+        # ── Product sections ───────────────────────────────────────
+        body_y = ent_y + entrance_h
+        for row, col, category in self.STORE_SECTIONS:
+            sx = store_x + col * col_w
+            sy = body_y + row * row_h
+
+            # Category stock info
+            cat_products = [
+                e.value for e in inventory.all_entries()
+                if e.value.category == category
+            ]
+            total_qty = sum(p.quantity for p in cat_products)
+            num_items = len(cat_products)
+
+            # Colour by stock level
+            if total_qty == 0:
+                fill, qty_color = "#3d1111", RED
+            elif total_qty < 30:
+                fill, qty_color = "#3d2e11", RED
+            elif total_qty < 100:
+                fill, qty_color = "#2e3311", YELLOW
+            else:
+                fill, qty_color = self.BP_SECTION, GREEN
+
+            pad = 3
+            canvas.create_rectangle(sx + pad, sy + pad,
+                                    sx + col_w - pad, sy + row_h - pad,
+                                    fill=fill, outline=self.BP_BORDER,
+                                    width=1.5)
+
+            # Category name
+            canvas.create_text(sx + col_w / 2, sy + row_h * 0.22,
+                               text=category.upper(),
+                               fill=self.BP_TEXT,
+                               font=("Consolas", 9, "bold"))
+
+            # Quantity number
+            canvas.create_text(sx + col_w / 2, sy + row_h * 0.50,
+                               text=str(total_qty),
+                               fill=qty_color,
+                               font=("Consolas", 20, "bold"))
+
+            # "units" label
+            canvas.create_text(sx + col_w / 2, sy + row_h * 0.72,
+                               text="units",
+                               fill=self.BP_DIM,
+                               font=("Consolas", 8))
+
+            # Product count
+            canvas.create_text(sx + col_w / 2, sy + row_h * 0.87,
+                               text=f"({num_items} products)",
+                               fill=self.BP_DIM,
+                               font=("Consolas", 8))
+
+        # ── Checkout area ──────────────────────────────────────────
+        ck_x = store_x + product_w
+        ck_y = body_y
+        canvas.create_rectangle(ck_x + 3, ck_y + 3,
+                                ck_x + checkout_w - 3, ck_y + body_h - 3,
+                                fill=self.BP_ENTRANCE, outline=self.BP_BORDER,
+                                width=1.5)
+        canvas.create_text(ck_x + checkout_w / 2, ck_y + 25,
+                           text="CHECKOUT",
+                           fill=self.BP_TEXT,
+                           font=("Consolas", 10, "bold"))
+
+        # Lane lines
+        lane_count = 5
+        lane_y0 = ck_y + 50
+        lane_y1 = ck_y + body_h - 20
+        if lane_y1 > lane_y0:
+            lane_sp = (lane_y1 - lane_y0) / lane_count
+            for i in range(lane_count):
+                ly = lane_y0 + i * lane_sp + lane_sp / 2
+                canvas.create_rectangle(
+                    ck_x + 12, ly - 7, ck_x + checkout_w - 12, ly + 7,
+                    fill=self.BP_SECTION, outline=self.BP_BORDER,
+                    width=1, dash=(3, 3))
+                canvas.create_text(ck_x + checkout_w / 2, ly,
+                                   text=f"Lane {i + 1}",
+                                   fill=self.BP_DIM,
+                                   font=("Consolas", 7))
+
+        # ── Store outline ──────────────────────────────────────────
+        canvas.create_rectangle(store_x, store_y,
+                                store_x + store_w,
+                                store_y + entrance_h + body_h,
+                                outline=self.BP_BORDER, width=3)
+
+        # ── Legend ─────────────────────────────────────────────────
+        lg_y = store_y + entrance_h + body_h + 8
+        for i, (color, label) in enumerate([
+            (GREEN,  "Well Stocked (100+)"),
+            (YELLOW, "Getting Low (30-99)"),
+            (RED,    "Critical (<30)"),
+        ]):
+            bx = margin + i * 210
+            canvas.create_rectangle(bx, lg_y, bx + 12, lg_y + 12,
+                                    fill=color, outline="")
+            canvas.create_text(bx + 18, lg_y + 6, text=label,
+                               fill=self.BP_DIM,
+                               font=("Consolas", 8), anchor=tk.W)
+
+    # ─── Tab 3: Inventory ───────────────────────────────────────────
 
     def _build_inventory_tab(self):
         """Build the inventory table tab with search."""
@@ -785,6 +991,71 @@ class MiniMeijerApp:
         self.report_text.tag_config("info",    foreground=PURPLE)
         self.report_text.tag_config("dim",     foreground=FG_DIM)
 
+    # ─── Bottom Status Bar ──────────────────────────────────────────
+
+    def _build_bottom_bar(self):
+        """Build the persistent bottom status bar showing inventory totals."""
+        self.bottom_bar = tk.Frame(self.root, bg=HEADER_BG, height=38)
+        self.bottom_bar.pack(fill=tk.X, padx=10, pady=(2, 8))
+        self.bottom_bar.pack_propagate(False)
+
+        # Total Products
+        tk.Label(self.bottom_bar, text="Products:", font=FONT_SMALL,
+                 bg=HEADER_BG, fg=FG_DIM).pack(side=tk.LEFT, padx=(15, 3))
+        self.bb_products = tk.Label(self.bottom_bar, text="0", font=FONT_BOLD,
+                                    bg=HEADER_BG, fg=ACCENT)
+        self.bb_products.pack(side=tk.LEFT, padx=(0, 18))
+
+        # Total Units
+        tk.Label(self.bottom_bar, text="Units:", font=FONT_SMALL,
+                 bg=HEADER_BG, fg=FG_DIM).pack(side=tk.LEFT, padx=(0, 3))
+        self.bb_units = tk.Label(self.bottom_bar, text="0", font=FONT_BOLD,
+                                  bg=HEADER_BG, fg=GREEN)
+        self.bb_units.pack(side=tk.LEFT, padx=(0, 18))
+
+        # Total Value
+        tk.Label(self.bottom_bar, text="Value:", font=FONT_SMALL,
+                 bg=HEADER_BG, fg=FG_DIM).pack(side=tk.LEFT, padx=(0, 3))
+        self.bb_value = tk.Label(self.bottom_bar, text="$0.00", font=FONT_BOLD,
+                                  bg=HEADER_BG, fg=TEAL)
+        self.bb_value.pack(side=tk.LEFT, padx=(0, 18))
+
+        # Low Stock Count
+        tk.Label(self.bottom_bar, text="Low Stock:", font=FONT_SMALL,
+                 bg=HEADER_BG, fg=FG_DIM).pack(side=tk.LEFT, padx=(0, 3))
+        self.bb_low = tk.Label(self.bottom_bar, text="0", font=FONT_BOLD,
+                                bg=HEADER_BG, fg=GREEN)
+        self.bb_low.pack(side=tk.LEFT)
+
+        # Playback progress bar
+        s = ttk.Style()
+        s.configure("BP.Horizontal.TProgressbar",
+                     troughcolor=BG_CARD, background=TEAL)
+        self.bb_progress = ttk.Progressbar(
+            self.bottom_bar, length=160, mode="determinate",
+            maximum=28, style="BP.Horizontal.TProgressbar"
+        )
+        self.bb_progress.pack(side=tk.RIGHT, padx=(0, 15))
+
+        # Status / playback label (right side)
+        self.bb_status = tk.Label(self.bottom_bar, text="Ready", font=FONT_SMALL,
+                                   bg=HEADER_BG, fg=FG_DIM)
+        self.bb_status.pack(side=tk.RIGHT, padx=(0, 8))
+
+    def _refresh_bottom_bar(self):
+        """Update the bottom bar with current inventory totals."""
+        products = [e.value for e in inventory.all_entries()]
+        total_products = len(products)
+        total_units = sum(p.quantity for p in products)
+        total_value = sum(p.price * p.quantity for p in products)
+        low_count = len([p for p in products if p.quantity <= 10])
+
+        self.bb_products.config(text=str(total_products))
+        self.bb_units.config(text=f"{total_units:,}")
+        self.bb_value.config(text=f"${total_value:,.2f}")
+        self.bb_low.config(text=str(low_count),
+                           fg=RED if low_count > 0 else GREEN)
+
     # ─── Actions ────────────────────────────────────────────────────
 
     def _load_inventory(self):
@@ -798,6 +1069,8 @@ class MiniMeijerApp:
         seed_inventory()
         self._refresh_inventory_table()
         self._refresh_low_stock()
+        self._refresh_blueprint()
+        self._refresh_bottom_bar()
         self.load_btn.configure(text="Inventory Loaded", bg=FG_DIM, state=tk.DISABLED)
         self._log("Inventory loaded with seed data.\n", "success")
 
@@ -823,6 +1096,11 @@ class MiniMeijerApp:
     def _run_simulation(self):
         """Run the full 7-day weekly simulation on a background thread."""
         value_before = get_total_value()
+
+        # Reset playback progress
+        self.root.after(0, lambda: self.bb_progress.configure(value=0))
+        self.root.after(0, lambda: self.bb_status.config(
+            text="Simulation Running...", fg=YELLOW))
 
         self._log("=" * 58 + "\n", "header")
         self._log("  Mini Meijer -- 7-Day Weekly Simulation\n", "header")
@@ -936,6 +1214,14 @@ class MiniMeijerApp:
                 self._log(f"\n  --- {day_name} | {block_label} "
                           f"({block_customers} customers) ---\n", "dim")
 
+                # Update playback status + progress
+                progress = day_index * 4 + block_index + 1
+                self.root.after(0, lambda d=day_name, b=block_label:
+                                self.bb_status.config(
+                                    text=f"Day {d} | {b}", fg=ACCENT))
+                self.root.after(0, lambda p=progress:
+                                self.bb_progress.configure(value=p))
+
                 for j in range(1, block_customers + 1):
                     customer_num += 1
                     day_customers += 1
@@ -1018,7 +1304,11 @@ class MiniMeijerApp:
                         "cart":        customer_cart_log,
                     })
 
-                    time.sleep(CONFIG["gui_delay"])
+                    # Live-update blueprint + bottom bar
+                    self.root.after(0, self._refresh_blueprint)
+                    self.root.after(0, self._refresh_bottom_bar)
+
+                    time.sleep(0.5 / max(1, self.sim_speed.get()))
 
                 sales_by_time_block[block_label] = (
                     sales_by_time_block.get(block_label, 0) + block_revenue
@@ -1148,6 +1438,12 @@ class MiniMeijerApp:
         self._refresh_low_stock()
         self._refresh_warehouse()
         self._refresh_delivery_history()
+        self._refresh_blueprint()
+        self._refresh_bottom_bar()
+
+        # Playback complete
+        self.bb_status.config(text="Simulation Complete", fg=GREEN)
+        self.bb_progress.configure(value=28)
 
         # Build report
         self._build_report_text(data)
