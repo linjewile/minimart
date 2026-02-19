@@ -12,7 +12,7 @@ CONFIG = {
     "low_stock_threshold":   10,   # Products at or below this trigger alerts
     "restock_target":        50,   # Overnight restock fills items up to this
     "delivery_restock_max":  25,   # Only deliver to items at or below this qty
-    "high_stock_threshold":  50,   # Items above this on Friday get sale flagged
+    "high_stock_threshold":  65,   # Items above this on Friday get sale flagged
     "sale_discount":         0.50, # Fraction off (0.50 = 50% off)
 
     # ─── HashMap Sizing ────────────────────────────────────────────
@@ -39,7 +39,7 @@ CONFIG = {
         "Sunday":    1.2,
     },
 
-    "delivery_days": ["Monday", "Thursday"],
+    "delivery_days": ["Tuesday"],
 
     # ─── Warehouse Stock (units per delivery per category) ─────────
     "warehouse_stock": {
@@ -75,8 +75,12 @@ CONFIG = {
         "Domestic Beer 12-Pack": (21, 80),
     },
 
-    # ─── Weekend Alcohol Pricing ───────────────────────────────────
-    "weekend_alcohol_markup": 0.20,   # +20% on Saturday & Sunday
+    # ─── Alcohol Surge Pricing (Fri-Sun only, Mon-Thu = fixed) ─────
+    "alcohol_surge_rates": {
+        "Friday":   0.25,   # +25% on Friday (highest demand night)
+        "Saturday": 0.20,   # +20% on Saturday
+        "Sunday":   0.10,   # +10% on Sunday
+    },
     "steak_wine_chance":      0.70,   # 70% chance to add Red Wine if Steak in cart
     # ─── Time-of-Day Blocks ────────────────────────────────────────
     "time_blocks": [
@@ -88,9 +92,10 @@ CONFIG = {
 
     # ─── Purchase Amount Weights ───────────────────────────────────
     "purchase_tiers": [
-        {"chance": 60, "min": 1,  "max": 3},   # Normal purchase
-        {"chance": 30, "min": 4,  "max": 6},   # Occasional bulk
-        {"chance": 10, "min": 7,  "max": 12},  # Rare large purchase
+        {"chance": 70, "min": 1,  "max": 1},   # Single item (most common)
+        {"chance": 20, "min": 2,  "max": 2},   # Grab two
+        {"chance":  8, "min": 3,  "max": 4},   # Small bulk
+        {"chance":  2, "min": 5,  "max": 6},   # Rare large purchase
     ],
 
     # ─── Shopper Profiles ──────────────────────────────────────────
@@ -98,7 +103,7 @@ CONFIG = {
         "Stay-at-Home Parent": {
             "age_range":    (25, 45),
             "time_weights":  [8, 3, 1, 0],
-            "basket_size":   (3, 6),          # Family shopper -- bigger carts
+            "basket_size":   (6, 14),         # Family shopper -- bigger carts
             "price_threshold": 6.00,           # Budget-conscious, avoids pricey items
             "skip_chance":   0.60,             # 60% chance to skip items above threshold
             "category_weights": {
@@ -110,7 +115,7 @@ CONFIG = {
         "Retired": {
             "age_range":    (60, 80),
             "time_weights":  [3, 8, 2, 0],
-            "basket_size":   (2, 4),          # Smaller, frequent trips
+            "basket_size":   (4, 9),          # Moderate, frequent trips
             "price_threshold": 5.00,           # Fixed income, price-sensitive
             "skip_chance":   0.70,             # 70% chance to skip expensive items
             "category_weights": {
@@ -122,7 +127,7 @@ CONFIG = {
         "Student": {
             "age_range":    (18, 25),
             "time_weights":  [1, 2, 8, 5],
-            "basket_size":   (1, 5),          # Tight budget, small trips
+            "basket_size":   (3, 8),          # Budget trips, some variety
             "price_threshold": 6.00,           # Very price-sensitive
             "skip_chance":   0.80,             # 80% chance to skip pricey items
             "category_weights": {
@@ -134,7 +139,7 @@ CONFIG = {
         "Office Worker": {
             "age_range":    (25, 55),
             "time_weights":  [1, 1, 9, 2],
-            "basket_size":   (2, 10),          # Moderate cart, after-work run
+            "basket_size":   (5, 15),         # After-work grocery run
             "price_threshold": 10.00,           # Comfortable income
             "skip_chance":   0.30,             # 30% chance to skip premium items
             "category_weights": {
@@ -146,7 +151,7 @@ CONFIG = {
         "Trade Worker": {
             "age_range":    (22, 55),
             "time_weights":  [5, 1, 7, 1],
-            "basket_size":   (2, 9),          # Moderate, quick grab-and-go
+            "basket_size":   (4, 12),         # Moderate, weekly stock-up
             "price_threshold": 8.00,           # Decent income, somewhat price-aware
             "skip_chance":   0.40,             # 40% chance to skip expensive items
             "category_weights": {
@@ -158,7 +163,7 @@ CONFIG = {
         "Night Shift": {
             "age_range":    (20, 50),
             "time_weights":  [4, 0, 1, 8],
-            "basket_size":   (1, 4),          # Quick late-night stops
+            "basket_size":   (3, 7),          # Late-night essentials run
             "price_threshold": 5.00,           # Moderate income, watches prices
             "skip_chance":   0.50,             # 50% chance to skip pricey items
             "category_weights": {

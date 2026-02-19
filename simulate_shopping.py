@@ -3,8 +3,8 @@ simulate_shopping.py
 ────────────────────
 Simulates a full 7-day week at Mini Meijer (Monday - Sunday).
 Each day runs 4 time blocks with customer counts scaled by a daily
-traffic multiplier.  Delivery trucks arrive from the warehouse on
-Tuesday and Friday mornings.  On Friday, high-inventory items are
+traffic multiplier.  A delivery truck arrives from the warehouse on
+Tuesday morning.  On Friday, high-inventory items are
 flagged and put on sale for the weekend.  Customers are generated
 with demographic profiles that drive shopping time and category
 preferences.
@@ -40,7 +40,7 @@ DELIVERY_RESTOCK_MAX = CONFIG["delivery_restock_max"]
 
 ALCOHOL_AGE_RULES    = CONFIG["alcohol_age_rules"]
 STEAK_WINE_CHANCE    = CONFIG["steak_wine_chance"]
-WEEKEND_ALCOHOL_MARKUP = CONFIG["weekend_alcohol_markup"]
+ALCOHOL_SURGE_RATES  = CONFIG["alcohol_surge_rates"]
 
 # ─── Week Schedule ─────────────────────────────────────────────────
 
@@ -59,9 +59,9 @@ DAY_TRAFFIC = {
 }
 
 # ─── Warehouse & Delivery System ──────────────────────────────────
-# The warehouse holds backup stock. Delivery trucks arrive Tuesday
-# and Friday mornings BEFORE the store opens, restocking shelves
-# from the warehouse.
+# The warehouse holds backup stock. A delivery truck arrives Tuesday
+# morning BEFORE the store opens, restocking shelves from the
+# warehouse.
 
 WAREHOUSE_STOCK = {
     # category: units delivered per truck
@@ -75,7 +75,7 @@ WAREHOUSE_STOCK = {
     "Desserts":   30,
 }
 
-DELIVERY_DAYS = ["Tuesday", "Friday"]   # Trucks arrive these mornings
+DELIVERY_DAYS = ["Tuesday"]              # Truck arrives Tuesday morning
 
 HIGH_STOCK_THRESHOLD = 50   # Products above this on Friday get sale suggestion
 SALE_DISCOUNT = 0.50        # 50% off suggested sale price
@@ -123,20 +123,32 @@ def process_delivery(day_name):
 
 
 def friday_sale_suggestions():
-    """Check inventory for high-stock items and suggest putting them on sale.
+    """Check inventory for items that are overstocked relative to the store average.
 
-    Products with quantity above HIGH_STOCK_THRESHOLD on Friday are
-    flagged. Returns the top 5 most overstocked as (product, suggested_price) tuples.
+    Instead of using a flat threshold (which always flags the same
+    high-capacity items like Bananas/Sparkling Water), this compares
+    each product's quantity to the store-wide average.  Items with
+    more than 1.5× the average are considered overstocked.  The top 5
+    are returned, with random tiebreaking so the list varies each week.
     """
+    all_products = [e.value for e in inventory.all_entries()]
+    if not all_products:
+        return []
+
+    avg_qty = sum(p.quantity for p in all_products) / len(all_products)
+    overstock_line = max(avg_qty * 1.5, HIGH_STOCK_THRESHOLD)
+
     candidates = []
-    for entry in inventory.all_entries():
-        p = entry.value
-        if p.quantity >= HIGH_STOCK_THRESHOLD:
+    for p in all_products:
+        if p.quantity >= overstock_line:
             sale_price = round(p.price * (1 - SALE_DISCOUNT), 2)
-            candidates.append((p, sale_price))
-    # Return only the top 5 most overstocked items
-    candidates.sort(key=lambda x: x[0].quantity, reverse=True)
-    return candidates[:5]
+            # Score = how far above the overstock line (normalised)
+            excess = p.quantity - overstock_line
+            candidates.append((p, sale_price, excess))
+
+    # Sort by excess descending, random tiebreaker
+    candidates.sort(key=lambda x: (x[2], random.random()), reverse=True)
+    return [(p, sp) for p, sp, _ in candidates[:5]]
 
 
 def print_sale_suggestions(suggestions):
@@ -369,7 +381,7 @@ def simulate():
         print(f"  Traffic multiplier: {traffic}x")
         print("#" * 60)
 
-        # ── Delivery truck (Tuesday & Friday, before store opens) ──
+        # ── Delivery truck (Tuesday, before store opens) ──
         if day_name in DELIVERY_DAYS:
             process_delivery(day_name)
             delivered = sum(WAREHOUSE_STOCK.values())
@@ -387,15 +399,16 @@ def simulate():
                 else:
                     print("  [--] Sales not applied. Prices unchanged.")
 
-        # ── Weekend alcohol price surge (Sat & Sun) ────────────────
+        # ── Alcohol price surge (Fri / Sat / Sun) ──────────────────
         alcohol_originals = {}  # product_id -> original_price
-        if day_name in ("Saturday", "Sunday"):
+        surge_rate = ALCOHOL_SURGE_RATES.get(day_name)
+        if surge_rate:
             for entry in inventory.all_entries():
                 p = entry.value
                 if p.category == "Alcohol":
                     alcohol_originals[p.id] = p.price
-                    p.price = round(p.price * (1 + WEEKEND_ALCOHOL_MARKUP), 2)
-            print(f"\n  [WEEKEND SURGE] Alcohol prices +{int(WEEKEND_ALCOHOL_MARKUP * 100)}% today")
+                    p.price = round(p.price * (1 + surge_rate), 2)
+            print(f"\n  [ALCOHOL SURGE] Alcohol prices +{int(surge_rate * 100)}% today ({day_name})")
 
         # ── Run each time block for this day ───────────────────────
         for block_index, block in enumerate(TIME_BLOCKS):

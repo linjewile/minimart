@@ -33,7 +33,7 @@ from simulate_shopping import (
     process_delivery, friday_sale_suggestions, apply_sales,
     HIGH_STOCK_THRESHOLD, SALE_DISCOUNT,
     RESTOCK_TARGET, DELIVERY_RESTOCK_MAX,
-    WEEKEND_ALCOHOL_MARKUP
+    ALCOHOL_SURGE_RATES
 )
 
 
@@ -278,14 +278,8 @@ class MiniMeijerApp:
     BP_TEXT     = "#e3f2fd"
     BP_DIM      = "#5c8ab5"
     BP_ENTRANCE = "#1a3d5c"
-
-    # Store floor plan: (row, col, category_name)
-    STORE_SECTIONS = [
-        (0, 0, "Produce"),    (0, 1, "Dairy"),              (0, 2, "Meat"),
-        (1, 0, "Bakery"),     (1, 1, "Beverages"),          (1, 2, "Pantry"),
-        (2, 0, "Snacks"),     (2, 1, "Desserts"),           (2, 2, "Frozen"),
-        (3, 0, "Household"),  (3, 1, "Kitchen Appliances"), (3, 2, "Alcohol"),
-    ]
+    BP_AISLE    = "#071320"
+    BP_WALL     = "#1b3a5c"
 
     def _build_blueprint_tab(self):
         """Build the store blueprint floor plan tab."""
@@ -298,151 +292,259 @@ class MiniMeijerApp:
         # Redraw on resize
         self.bp_canvas.bind("<Configure>", lambda e: self._refresh_blueprint())
 
+    def _get_category_stock(self, category):
+        """Return (total_qty, num_products) for a category."""
+        prods = [e.value for e in inventory.all_entries()
+                 if e.value.category == category]
+        return sum(p.quantity for p in prods), len(prods)
+
+    def _stock_color(self, total_qty):
+        """Return (fill_colour, text_colour) based on stock level."""
+        if total_qty == 0:
+            return "#3d1111", RED
+        elif total_qty < 30:
+            return "#3d2e11", RED
+        elif total_qty < 100:
+            return "#2e3311", YELLOW
+        else:
+            return self.BP_SECTION, GREEN
+
+    def _draw_section(self, canvas, x, y, w, h, category, vertical_text=False):
+        """Draw a single store section box with live stock data."""
+        total_qty, num_items = self._get_category_stock(category)
+        fill, qty_color = self._stock_color(total_qty)
+
+        canvas.create_rectangle(x, y, x + w, y + h,
+                                fill=fill, outline=self.BP_BORDER, width=1.5)
+
+        cx, cy = x + w / 2, y + h / 2
+
+        if vertical_text and h > w * 1.5:
+            # Vertical layout for tall narrow sections
+            canvas.create_text(cx, cy - h * 0.25,
+                               text=category.upper(),
+                               fill=self.BP_TEXT,
+                               font=("Consolas", 8, "bold"))
+            canvas.create_text(cx, cy,
+                               text=str(total_qty),
+                               fill=qty_color,
+                               font=("Consolas", 16, "bold"))
+            canvas.create_text(cx, cy + h * 0.20,
+                               text=f"{num_items}p",
+                               fill=self.BP_DIM,
+                               font=("Consolas", 7))
+        else:
+            # Horizontal layout
+            name_size = 8 if len(category) > 10 else 9
+            canvas.create_text(cx, cy - h * 0.28,
+                               text=category.upper(),
+                               fill=self.BP_TEXT,
+                               font=("Consolas", name_size, "bold"))
+            qty_size = 14 if w < 120 else 18
+            canvas.create_text(cx, cy + h * 0.02,
+                               text=str(total_qty),
+                               fill=qty_color,
+                               font=("Consolas", qty_size, "bold"))
+            canvas.create_text(cx, cy + h * 0.30,
+                               text=f"{num_items} products",
+                               fill=self.BP_DIM,
+                               font=("Consolas", 7))
+
     def _refresh_blueprint(self):
-        """Redraw the store blueprint with current inventory quantities."""
+        """Redraw a realistic grocery store floor plan."""
         canvas = self.bp_canvas
         canvas.delete("all")
 
-        w = canvas.winfo_width()
-        h = canvas.winfo_height()
-        if w < 200 or h < 200:
+        W = canvas.winfo_width()
+        H = canvas.winfo_height()
+        if W < 400 or H < 350:
             return
 
-        # ── Grid pattern (blueprint aesthetic) ─────────────────────
-        for gx in range(0, w, 25):
-            canvas.create_line(gx, 0, gx, h, fill=self.BP_GRID)
-        for gy in range(0, h, 25):
-            canvas.create_line(0, gy, w, gy, fill=self.BP_GRID)
+        # ── Blueprint grid ─────────────────────────────────────────
+        for gx in range(0, W, 25):
+            canvas.create_line(gx, 0, gx, H, fill=self.BP_GRID)
+        for gy in range(0, H, 25):
+            canvas.create_line(0, gy, W, gy, fill=self.BP_GRID)
 
-        # ── Layout geometry ────────────────────────────────────────
-        margin = 30
-        title_h = 40
-        entrance_h = 34
-        legend_h = 28
-        store_x = margin
-        store_y = margin + title_h
-        store_w = w - 2 * margin
-        checkout_frac = 0.17
-        product_w = store_w * (1 - checkout_frac)
-        checkout_w = store_w * checkout_frac
-        col_w = product_w / 3
-        body_h = h - 2 * margin - title_h - entrance_h - legend_h
-        row_h = body_h / 4
+        # ── Geometry ───────────────────────────────────────────────
+        M = 25                            # margin
+        title_h = 36
+        legend_h = 24
+        sx, sy = M, M + title_h          # store top-left
+        sw = W - 2 * M                   # store width
+        sh = H - 2 * M - title_h - legend_h  # store height
+
+        # Proportions
+        wall_d = sh * 0.14               # perimeter dept depth
+        ck_h   = sh * 0.12               # checkout zone height
+        aisle_gap = 8                     # gap between aisle shelves
+        entrance_w = sw * 0.25           # entrance door width
+
+        # Inner shopping area
+        inner_x = sx + wall_d
+        inner_y = sy + wall_d
+        inner_w = sw - 2 * wall_d
+        inner_h = sh - wall_d - ck_h
 
         # ── Title ──────────────────────────────────────────────────
-        canvas.create_text(w / 2, margin + title_h / 2,
-                           text="MINI MEIJER \u2014 STORE BLUEPRINT",
+        canvas.create_text(W / 2, M + title_h / 2,
+                           text="MINI MEIJER \u2014 STORE FLOOR PLAN",
                            fill=self.BP_TEXT,
-                           font=("Consolas", 14, "bold"))
+                           font=("Consolas", 13, "bold"))
 
-        # ── Entrance banner ────────────────────────────────────────
-        ent_y = store_y
-        canvas.create_rectangle(store_x, ent_y,
-                                store_x + store_w, ent_y + entrance_h,
-                                fill=self.BP_ENTRANCE, outline=self.BP_BORDER,
-                                width=2)
-        canvas.create_text(store_x + store_w / 2, ent_y + entrance_h / 2,
-                           text="\u25B6  ENTRANCE / EXIT  \u25C0",
-                           fill=self.BP_TEXT,
-                           font=("Consolas", 11, "bold"))
+        # ── Store outer walls ──────────────────────────────────────
+        canvas.create_rectangle(sx, sy, sx + sw, sy + sh,
+                                outline=self.BP_BORDER, width=3)
 
-        # ── Product sections ───────────────────────────────────────
-        body_y = ent_y + entrance_h
-        for row, col, category in self.STORE_SECTIONS:
-            sx = store_x + col * col_w
-            sy = body_y + row * row_h
+        # ══════════════════════════════════════════════════════════
+        #  PERIMETER DEPARTMENTS (wall sections)
+        # ══════════════════════════════════════════════════════════
 
-            # Category stock info
-            cat_products = [
-                e.value for e in inventory.all_entries()
-                if e.value.category == category
-            ]
-            total_qty = sum(p.quantity for p in cat_products)
-            num_items = len(cat_products)
+        # --- TOP WALL (left to right): Produce | Bakery | Deli/Meat ---
+        tw = sw / 3
+        self._draw_section(canvas, sx, sy, tw, wall_d, "Produce")
+        self._draw_section(canvas, sx + tw, sy, tw, wall_d, "Bakery")
+        self._draw_section(canvas, sx + 2 * tw, sy, sw - 2 * tw, wall_d, "Meat")
 
-            # Colour by stock level
-            if total_qty == 0:
-                fill, qty_color = "#3d1111", RED
-            elif total_qty < 30:
-                fill, qty_color = "#3d2e11", RED
-            elif total_qty < 100:
-                fill, qty_color = "#2e3311", YELLOW
-            else:
-                fill, qty_color = self.BP_SECTION, GREEN
+        # Wall label
+        canvas.create_text(sx + sw / 2, sy - 8,
+                           text="\u2500\u2500 BACK WALL (fresh departments) \u2500\u2500",
+                           fill=self.BP_DIM, font=("Consolas", 7))
 
-            pad = 3
-            canvas.create_rectangle(sx + pad, sy + pad,
-                                    sx + col_w - pad, sy + row_h - pad,
-                                    fill=fill, outline=self.BP_BORDER,
-                                    width=1.5)
+        # --- LEFT WALL: Dairy (full height of inner area) ---
+        self._draw_section(canvas, sx, sy + wall_d,
+                           wall_d, inner_h, "Dairy", vertical_text=True)
 
-            # Category name
-            canvas.create_text(sx + col_w / 2, sy + row_h * 0.22,
-                               text=category.upper(),
-                               fill=self.BP_TEXT,
-                               font=("Consolas", 9, "bold"))
+        # --- RIGHT WALL: Alcohol (full height of inner area) ---
+        self._draw_section(canvas, sx + sw - wall_d, sy + wall_d,
+                           wall_d, inner_h, "Alcohol", vertical_text=True)
 
-            # Quantity number
-            canvas.create_text(sx + col_w / 2, sy + row_h * 0.50,
-                               text=str(total_qty),
-                               fill=qty_color,
-                               font=("Consolas", 20, "bold"))
+        # Side labels
+        canvas.create_text(sx - 8, sy + wall_d + inner_h / 2,
+                           text="DAIRY WALL", fill=self.BP_DIM,
+                           font=("Consolas", 7), angle=90)
+        canvas.create_text(sx + sw + 8, sy + wall_d + inner_h / 2,
+                           text="ALCOHOL WALL", fill=self.BP_DIM,
+                           font=("Consolas", 7), angle=90)
 
-            # "units" label
-            canvas.create_text(sx + col_w / 2, sy + row_h * 0.72,
-                               text="units",
+        # ══════════════════════════════════════════════════════════
+        #  CENTER AISLES
+        # ══════════════════════════════════════════════════════════
+
+        # 3 aisles in the center, each with a category on each side
+        # Aisle 1: Beverages | Pantry
+        # Aisle 2: Snacks    | Frozen
+        # Aisle 3: Household | Kitchen Appliances + Desserts
+        aisle_count = 3
+        aisle_total_w = inner_w
+        aisle_unit = aisle_total_w / aisle_count
+        shelf_w = (aisle_unit - aisle_gap) / 2
+        aisle_h = inner_h - 6  # slight padding
+
+        aisle_defs = [
+            ("Beverages",  "Pantry"),
+            ("Snacks",     "Frozen"),
+            ("Household",  "Desserts"),
+        ]
+
+        for i, (left_cat, right_cat) in enumerate(aisle_defs):
+            ax = inner_x + i * aisle_unit
+            ay = inner_y + 3
+
+            # Left shelf
+            self._draw_section(canvas, ax, ay, shelf_w, aisle_h, left_cat)
+
+            # Aisle lane (walkway between shelves)
+            lane_x = ax + shelf_w
+            canvas.create_rectangle(lane_x, ay, lane_x + aisle_gap, ay + aisle_h,
+                                    fill=self.BP_AISLE, outline="")
+            # Aisle number label (rotated-style centered)
+            canvas.create_text(lane_x + aisle_gap / 2, ay + aisle_h / 2,
+                               text=f"AISLE {i + 1}",
                                fill=self.BP_DIM,
+                               font=("Consolas", 6, "bold"), angle=90)
+            # Arrow indicators
+            canvas.create_text(lane_x + aisle_gap / 2, ay + 10,
+                               text="\u25BC", fill=self.BP_DIM,
+                               font=("Consolas", 8))
+            canvas.create_text(lane_x + aisle_gap / 2, ay + aisle_h - 10,
+                               text="\u25B2", fill=self.BP_DIM,
                                font=("Consolas", 8))
 
-            # Product count
-            canvas.create_text(sx + col_w / 2, sy + row_h * 0.87,
-                               text=f"({num_items} products)",
-                               fill=self.BP_DIM,
-                               font=("Consolas", 8))
+            # Right shelf
+            self._draw_section(canvas, lane_x + aisle_gap, ay,
+                               shelf_w, aisle_h, right_cat)
 
-        # ── Checkout area ──────────────────────────────────────────
-        ck_x = store_x + product_w
-        ck_y = body_y
-        canvas.create_rectangle(ck_x + 3, ck_y + 3,
-                                ck_x + checkout_w - 3, ck_y + body_h - 3,
+        # ── Kitchen Appliances (special endcap between aisle 3 and right wall)
+        # Use the space on the right side near Alcohol wall
+        endcap_w = inner_w * 0.18
+        endcap_h = inner_h * 0.35
+        endcap_x = sx + sw - wall_d - endcap_w - 4
+        endcap_y = inner_y + inner_h - endcap_h - 2
+        self._draw_section(canvas, endcap_x, endcap_y,
+                           endcap_w, endcap_h, "Kitchen Appliances")
+        # Endcap label
+        canvas.create_text(endcap_x + endcap_w / 2, endcap_y - 7,
+                           text="\u25C6 ENDCAP",
+                           fill=YELLOW, font=("Consolas", 6, "bold"))
+
+        # ══════════════════════════════════════════════════════════
+        #  CHECKOUT ZONE (bottom of store)
+        # ══════════════════════════════════════════════════════════
+
+        ck_y = sy + sh - ck_h
+        canvas.create_rectangle(sx + 1, ck_y, sx + sw - 1, sy + sh - 1,
                                 fill=self.BP_ENTRANCE, outline=self.BP_BORDER,
                                 width=1.5)
-        canvas.create_text(ck_x + checkout_w / 2, ck_y + 25,
+        canvas.create_text(sx + sw * 0.12, ck_y + ck_h / 2,
                            text="CHECKOUT",
                            fill=self.BP_TEXT,
                            font=("Consolas", 10, "bold"))
 
-        # Lane lines
-        lane_count = 5
-        lane_y0 = ck_y + 50
-        lane_y1 = ck_y + body_h - 20
-        if lane_y1 > lane_y0:
-            lane_sp = (lane_y1 - lane_y0) / lane_count
-            for i in range(lane_count):
-                ly = lane_y0 + i * lane_sp + lane_sp / 2
-                canvas.create_rectangle(
-                    ck_x + 12, ly - 7, ck_x + checkout_w - 12, ly + 7,
-                    fill=self.BP_SECTION, outline=self.BP_BORDER,
-                    width=1, dash=(3, 3))
-                canvas.create_text(ck_x + checkout_w / 2, ly,
-                                   text=f"Lane {i + 1}",
-                                   fill=self.BP_DIM,
-                                   font=("Consolas", 7))
+        # Checkout lanes
+        lane_count = 6
+        lanes_x0 = sx + sw * 0.22
+        lanes_x1 = sx + sw * 0.78
+        lane_sp = (lanes_x1 - lanes_x0) / lane_count
+        for i in range(lane_count):
+            lx = lanes_x0 + i * lane_sp + lane_sp * 0.15
+            lw = lane_sp * 0.7
+            canvas.create_rectangle(lx, ck_y + 6, lx + lw, ck_y + ck_h - 6,
+                                    fill=self.BP_SECTION, outline=self.BP_BORDER,
+                                    width=1, dash=(4, 3))
+            canvas.create_text(lx + lw / 2, ck_y + ck_h / 2,
+                               text=str(i + 1),
+                               fill=self.BP_DIM,
+                               font=("Consolas", 9, "bold"))
 
-        # ── Store outline ──────────────────────────────────────────
-        canvas.create_rectangle(store_x, store_y,
-                                store_x + store_w,
-                                store_y + entrance_h + body_h,
-                                outline=self.BP_BORDER, width=3)
+        # Customer service desk
+        cs_x = sx + sw * 0.82
+        canvas.create_rectangle(cs_x, ck_y + 4, sx + sw - 4, ck_y + ck_h - 4,
+                                fill=self.BP_WALL, outline=self.BP_BORDER,
+                                width=1)
+        canvas.create_text((cs_x + sx + sw - 4) / 2, ck_y + ck_h / 2,
+                           text="SERVICE\nDESK",
+                           fill=self.BP_TEXT, font=("Consolas", 7, "bold"),
+                           justify=tk.CENTER)
+
+        # ── Entrance door (bottom wall, centered) ──────────────────
+        door_x = sx + (sw - entrance_w) / 2
+        door_y = sy + sh
+        canvas.create_rectangle(door_x, door_y - 4, door_x + entrance_w, door_y + 4,
+                                fill=GREEN, outline="")
+        canvas.create_text(door_x + entrance_w / 2, door_y + 14,
+                           text="\u25B2  ENTRANCE / EXIT  \u25B2",
+                           fill=self.BP_TEXT,
+                           font=("Consolas", 10, "bold"))
 
         # ── Legend ─────────────────────────────────────────────────
-        lg_y = store_y + entrance_h + body_h + 8
+        lg_y = sy + sh + 26
         for i, (color, label) in enumerate([
             (GREEN,  "Well Stocked (100+)"),
             (YELLOW, "Getting Low (30-99)"),
             (RED,    "Critical (<30)"),
         ]):
-            bx = margin + i * 210
+            bx = M + i * 210
             canvas.create_rectangle(bx, lg_y, bx + 12, lg_y + 12,
                                     fill=color, outline="")
             canvas.create_text(bx + 18, lg_y + 6, text=label,
@@ -1193,16 +1295,40 @@ class MiniMeijerApp:
                     else:
                         self._log("  [--] Sales not applied.\n", "dim")
 
-            # ── Weekend alcohol price surge (Sat & Sun) ─────────────
+            # ── Alcohol price surge (Fri / Sat / Sun) ───────────────
             alcohol_originals = {}  # product_id -> original_price
-            if day_name in ("Saturday", "Sunday"):
+            surge_rate = ALCOHOL_SURGE_RATES.get(day_name)
+            if surge_rate:
+                # Build list of alcohol items and their surge prices
+                alcohol_items = []
                 for entry in inventory.all_entries():
                     p = entry.value
                     if p.category == "Alcohol":
-                        alcohol_originals[p.id] = p.price
-                        p.price = round(p.price * (1 + WEEKEND_ALCOHOL_MARKUP), 2)
-                self._log(f"\n  [WEEKEND SURGE] Alcohol prices "
-                          f"+{int(WEEKEND_ALCOHOL_MARKUP * 100)}% today\n", "warning")
+                        new_price = round(p.price * (1 + surge_rate), 2)
+                        alcohol_items.append((p, new_price))
+
+                if alcohol_items:
+                    self._log(f"\n  [ALCOHOL SURGE] Proposing +{int(surge_rate * 100)}% "
+                              f"alcohol markup for {day_name}...\n", "warning")
+                    for p, new_price in alcohol_items:
+                        self._log(f"    {p.name:<24} ${p.price:.2f} -> ${new_price:.2f}\n", "warning")
+
+                    # Ask user via popup on the main thread
+                    self._alcohol_surge_items = alcohol_items
+                    self._alcohol_surge_rate = surge_rate
+                    self._alcohol_surge_day = day_name
+                    self._alcohol_surge_approved = None
+                    self.root.after(0, self._show_alcohol_surge_popup)
+                    while self._alcohol_surge_approved is None:
+                        time.sleep(0.1)
+
+                    if self._alcohol_surge_approved:
+                        for p, new_price in alcohol_items:
+                            alcohol_originals[p.id] = p.price
+                            p.price = new_price
+                        self._log(f"  [OK] {day_name} alcohol surge applied!\n", "success")
+                    else:
+                        self._log(f"  [--] {day_name} surge declined. Prices unchanged.\n", "dim")
 
             # ── Time blocks for this day ────────────────────────────
             for block_index, block in enumerate(TIME_BLOCKS):
@@ -1400,6 +1526,22 @@ class MiniMeijerApp:
 
         result = messagebox.askyesno("Friday Sale -- Top 5", msg)
         self._sale_approved = result
+
+    def _show_alcohol_surge_popup(self):
+        """Show a popup asking user to approve alcohol price surge."""
+        items = self._alcohol_surge_items
+        rate = self._alcohol_surge_rate
+        day = self._alcohol_surge_day
+        pct = int(rate * 100)
+        msg = f"{day} Alcohol Surge (+{pct}%)\n"
+        msg += f"{len(items)} alcohol products will be marked up:\n\n"
+        for i, (p, new_price) in enumerate(items, 1):
+            increase = new_price - p.price
+            msg += f"  {i}. {p.name}: ${p.price:.2f} -> ${new_price:.2f} (+${increase:.2f})\n"
+        msg += f"\nApply the +{pct}% {day} surge?"
+
+        result = messagebox.askyesno(f"{day} Alcohol Surge", msg)
+        self._alcohol_surge_approved = result
 
     def _update_after_simulation(self):
         """Update all GUI elements after the simulation completes."""
