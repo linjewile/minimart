@@ -12,15 +12,31 @@ preferences.
 
 import random
 import time
+from config import CONFIG
 from inventory import (
     seed_inventory, inventory, purchase, restock,
     print_inventory, get_low_stock, get_total_value, update_price,
     get_all_products
 )
 
-# ─── Configuration ──────────────────────────────────────────────────
+# ─── Configuration (pulled from central config.py) ─────────────────
 
-DELAY_BETWEEN = 0.15        # Seconds between customers (for readability)
+DELAY_BETWEEN        = CONFIG["delay_between"]
+DAY_NAMES            = CONFIG["day_names"]
+DAY_TRAFFIC          = CONFIG["day_traffic"]
+DELIVERY_DAYS        = CONFIG["delivery_days"]
+WAREHOUSE_STOCK      = CONFIG["warehouse_stock"]
+HIGH_STOCK_THRESHOLD = CONFIG["high_stock_threshold"]
+SALE_DISCOUNT        = CONFIG["sale_discount"]
+TIME_BLOCKS          = CONFIG["time_blocks"]
+SHOPPER_PROFILES     = CONFIG["shopper_profiles"]
+PROFESSION_TO_PROFILE = CONFIG["profession_to_profile"]
+FIRST_NAMES          = CONFIG["first_names"]
+LAST_NAMES           = CONFIG["last_names"]
+RACES                = CONFIG["races"]
+PROFESSIONS          = CONFIG["professions"]
+RESTOCK_TARGET       = CONFIG["restock_target"]
+DELIVERY_RESTOCK_MAX = CONFIG["delivery_restock_max"]
 
 # ─── Week Schedule ─────────────────────────────────────────────────
 
@@ -65,7 +81,7 @@ def process_delivery(day_name):
     """Simulate a delivery truck arriving from the warehouse.
 
     Distributes warehouse stock evenly across products in each category.
-    Only restocks products that have 25 or fewer units remaining.
+    Only restocks products that have {DELIVERY_RESTOCK_MAX} or fewer units remaining.
 
     Args:
         day_name: The day of the week (e.g. 'Tuesday').
@@ -74,15 +90,15 @@ def process_delivery(day_name):
     print(f"  DELIVERY TRUCK -- {day_name} Morning")
     print(f"  {'=' * 55}")
     print(f"  Truck arriving from warehouse...")
-    print(f"  (Only restocking items with 25 or fewer units)")
+    print(f"  (Only restocking items with {DELIVERY_RESTOCK_MAX} or fewer units)")
 
     total_units = 0
 
     for category, units in WAREHOUSE_STOCK.items():
-        # Find products in this category that need restocking (qty <= 25)
+        # Find products in this category that need restocking
         products_in_cat = [
             e.value for e in inventory.all_entries()
-            if e.value.category == category and e.value.quantity <= 25
+            if e.value.category == category and e.value.quantity <= DELIVERY_RESTOCK_MAX
         ]
         if not products_in_cat:
             continue
@@ -146,136 +162,7 @@ def apply_sales(suggestions):
     print(f"  [OK] {len(suggestions)} items now on sale!")
 
 
-# ─── Time-of-Day Schedule ──────────────────────────────────────────
-# Each block has a label, hours, total customers, and max cart size.
-# The demographic mix is now driven by SHOPPER_PROFILES below.
-
-TIME_BLOCKS = [
-    {
-        "label":      "Morning (7am - 9am)",
-        "hours":      "7:00 - 9:00",
-        "customers":  8,
-        "max_cart":   4,
-    },
-    {
-        "label":      "Midday (11am - 1pm)",
-        "hours":      "11:00 - 13:00",
-        "customers":  5,
-        "max_cart":   3,
-    },
-    {
-        "label":      "Evening (4pm - 7pm)",
-        "hours":      "16:00 - 19:00",
-        "customers":  12,
-        "max_cart":   6,
-    },
-    {
-        "label":      "Night (8pm - 10pm)",
-        "hours":      "20:00 - 22:00",
-        "customers":  3,
-        "max_cart":   3,
-    },
-]
-
-
-# ─── Demographic Shopper Profiles ──────────────────────────────────
-# Each profile defines:
-#   - who shops (profession, age range)
-#   - when they prefer to shop (time block weights: morning, midday, evening, night)
-#   - what they buy (category weights -- higher = more likely to pick from that category)
-#
-# Time weights are probability weights for which time block this type
-# of shopper appears in. E.g. a Student has weight 1 for morning,
-# 2 for midday, 8 for evening, 5 for night -- so they mostly show up
-# in the evening.
-
-SHOPPER_PROFILES = {
-    # ── Stay-at-home parents: morning shoppers, family staples ──
-    "Stay-at-Home Parent": {
-        "age_range":    (25, 45),
-        "time_weights":  [8, 3, 1, 0],   # morning heavy
-        "category_weights": {
-            "Dairy": 8, "Bakery": 7, "Produce": 7, "Beverages": 5,
-            "Meat": 6, "Pantry": 8, "Snacks": 5, "Desserts": 4,
-        },
-    },
-    # ── Retired: midday shoppers, healthy + staples ──
-    "Retired": {
-        "age_range":    (60, 80),
-        "time_weights":  [3, 8, 2, 0],   # midday heavy
-        "category_weights": {
-            "Dairy": 7, "Bakery": 8, "Produce": 9, "Beverages": 6,
-            "Meat": 5, "Pantry": 7, "Snacks": 3, "Desserts": 4,
-        },
-    },
-    # ── Students: evening/night, cheap + snacks ──
-    "Student": {
-        "age_range":    (18, 25),
-        "time_weights":  [1, 2, 8, 5],   # evening + night
-        "category_weights": {
-            "Dairy": 4, "Bakery": 5, "Produce": 2, "Beverages": 8,
-            "Meat": 3, "Pantry": 7, "Snacks": 9, "Desserts": 7,
-        },
-    },
-    # ── Office workers (9-5 jobs): evening rush ──
-    "Office Worker": {
-        "age_range":    (25, 55),
-        "time_weights":  [1, 1, 9, 2],   # evening heavy
-        "category_weights": {
-            "Dairy": 6, "Bakery": 4, "Produce": 7, "Beverages": 5,
-            "Meat": 8, "Pantry": 7, "Snacks": 4, "Desserts": 5,
-        },
-    },
-    # ── Trade workers (early shift): morning + evening ──
-    "Trade Worker": {
-        "age_range":    (22, 55),
-        "time_weights":  [5, 1, 7, 1],   # morning + evening
-        "category_weights": {
-            "Dairy": 5, "Bakery": 6, "Produce": 4, "Beverages": 7,
-            "Meat": 8, "Pantry": 6, "Snacks": 6, "Desserts": 3,
-        },
-    },
-    # ── Night shift workers: night + morning ──
-    "Night Shift": {
-        "age_range":    (20, 50),
-        "time_weights":  [4, 0, 1, 8],   # night heavy
-        "category_weights": {
-            "Dairy": 5, "Bakery": 4, "Produce": 3, "Beverages": 8,
-            "Meat": 4, "Pantry": 5, "Snacks": 8, "Desserts": 6,
-        },
-    },
-}
-
-# Map old profession names to shopper profile types
-PROFESSION_TO_PROFILE = {
-    "Teacher":              "Office Worker",
-    "Nurse":                "Night Shift",
-    "Software Engineer":    "Office Worker",
-    "Electrician":          "Trade Worker",
-    "Accountant":           "Office Worker",
-    "Chef":                 "Night Shift",
-    "Mechanic":             "Trade Worker",
-    "Pharmacist":           "Office Worker",
-    "Graphic Designer":     "Office Worker",
-    "Lawyer":               "Office Worker",
-    "Cashier":              "Trade Worker",
-    "Construction Worker":  "Trade Worker",
-    "Dentist":              "Office Worker",
-    "Firefighter":          "Night Shift",
-    "Barber":               "Trade Worker",
-    "Social Worker":        "Office Worker",
-    "Truck Driver":         "Night Shift",
-    "Plumber":              "Trade Worker",
-    "Retail Manager":       "Trade Worker",
-    "Student":              "Student",
-    "Retired":              "Retired",
-    "Freelancer":           "Office Worker",
-    "Doctor":               "Office Worker",
-    "Salesperson":          "Office Worker",
-    "Warehouse Associate":  "Night Shift",
-    "Stay-at-Home Parent":  "Stay-at-Home Parent",
-}
-
+# ─── Profile Selection ──────────────────────────────────────────────
 
 def get_profile_for_time_block(block_index):
     """Pick a shopper profile weighted by who is likely to shop at this time.
@@ -293,15 +180,16 @@ def get_profile_for_time_block(block_index):
 
 
 def pick_products_by_preference(products, profile, max_items):
-    """Select products for a customer's cart based on their category preferences.
+    """Select products for a customer's cart based on profile preferences.
 
-    Uses the profile's category_weights to bias product selection toward
-    categories the customer is more likely to buy from.
+    Uses the profile's category_weights to bias product selection,
+    basket_size to set cart limits, and price_threshold to penalise
+    items that are too expensive for this customer type.
 
     Args:
         products:   List of all available Product objects.
-        profile:    The shopper profile dict with category_weights.
-        max_items:  Maximum number of items in the cart.
+        profile:    The shopper profile dict.
+        max_items:  Fallback max if profile has no basket_size.
 
     Returns:
         A list of Product objects for the cart.
@@ -310,21 +198,39 @@ def pick_products_by_preference(products, profile, max_items):
         return []
 
     cat_weights = profile["category_weights"]
+    price_cap = profile.get("price_threshold", 999)
+    skip_chance = profile.get("skip_chance", 0.0)
 
-    # Assign a weight to each product based on its category
+    # Assign a weight to each product: category preference + price sensitivity
     weights = []
     for p in products:
-        w = cat_weights.get(p.category, 3)  # default weight 3 for unknown categories
+        w = cat_weights.get(p.category, 3)
+        # Reduce weight for items above the customer's price comfort zone
+        if p.price > price_cap:
+            if random.random() < skip_chance:
+                w = 0              # Customer skips this item entirely
+            else:
+                w = max(1, w // 2) # Halve the weight -- less likely to pick
         weights.append(w)
 
-    # Pick items using weighted sampling (no duplicates)
-    num_items = random.randint(1, min(max_items, len(products)))
+    # If every weight is 0, fall back to uniform selection
+    if all(w == 0 for w in weights):
+        weights = [1] * len(products)
+
+    # Cart size from profile basket_size, capped by time-block max_items
+    basket_lo, basket_hi = profile.get("basket_size", (1, max_items))
+    num_items = random.randint(basket_lo, min(basket_hi, max_items, len(products)))
+
+    # Weighted sampling without replacement
     cart = []
     available = list(range(len(products)))
     available_weights = list(weights)
 
     for _ in range(num_items):
         if not available:
+            break
+        # Need at least one non-zero weight to sample
+        if all(w == 0 for w in available_weights):
             break
         chosen_idx = random.choices(range(len(available)), weights=available_weights, k=1)[0]
         cart.append(products[available[chosen_idx]])
@@ -339,56 +245,19 @@ def pick_products_by_preference(products, profile, max_items):
 def random_purchase_amount():
     """Return a weighted random quantity to simulate real buying patterns.
 
-    60% chance: 1-3 units  (normal purchase)
-    30% chance: 4-6 units  (occasional bulk buyer)
-    10% chance: 7-12 units (rare large purchase)
+    Uses purchase_tiers from CONFIG to determine ranges and chances.
     """
     roll = random.randint(0, 99)
-    if roll < 60:
-        return random.randint(1, 3)
-    elif roll < 90:
-        return random.randint(4, 6)
-    else:
-        return random.randint(7, 12)
+    cumulative = 0
+    for tier in CONFIG["purchase_tiers"]:
+        cumulative += tier["chance"]
+        if roll < cumulative:
+            return random.randint(tier["min"], tier["max"])
+    # Fallback to last tier
+    last = CONFIG["purchase_tiers"][-1]
+    return random.randint(last["min"], last["max"])
 
 # ─── Customer Demographics ──────────────────────────────────────────
-
-FIRST_NAMES = [
-    "Chloe", "Temi", "Jazlyn", "Noah", "Jacque", "James", "Daniela", "Omar",
-    "Diana", "Carolina", "Isabella", "Mason", "Charlotte", "Logan", "Amelia",
-    "Aiden", "Harper", "Elijah", "Angel", "Ben", "Grace", "Caleb",
-    "Lily", "Jack", "Zoe", "Ryan", "Nora", "Leo", "Amora", "Dylan",
-    "Aaliyah", "Marcus", "Fatima", "Li", "Priya", "Carlos", "Yuki",
-    "Darnell", "Keiko", "Rashid", "Ingrid", "Benito", "Jason", "Kofi",
-    "Princess", "Jamal", "Ananya", "Dante", "Manuel", "Hiroshi", "Amara",
-    "Toure", "Rosa", "Tariq", "Simone", "Andrei", "Jasmine", "Digna",
-    "Elena", "Noel", "Valentina", "Raj", "Aisha", "Jorge", "Bianca",
-    "Hassan", "Monique", "Jin", "Camila", "Tyrone", "Leila"
-]
-
-LAST_NAMES = [
-    "Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller",
-    "Davis", "Martinez", "Lopez", "Wilson", "Anderson", "Thomas", "Taylor",
-    "Lee", "Kim", "Nguyen", "Patel", "Chen", "Wang", "Jackson", "White",
-    "Harris", "Clark", "Robinson", "Walker", "Hall", "Young", "King",
-    "Wright", "Torres", "Rivera", "Evans", "Okafor", "Yamamoto", "Singh",
-    "Johansson", "Petrov", "Alvarado", "Mensah"
-]
-
-RACES = [
-    "White", "Black", "Hispanic", "Asian", "Arab",
-    "Native American", "Pacific Islander", "Multiracial"
-]
-
-PROFESSIONS = [
-    "Teacher", "Nurse", "Software Engineer", "Electrician", "Accountant",
-    "Chef", "Mechanic", "Pharmacist", "Graphic Designer", "Lawyer",
-    "Cashier", "Construction Worker", "Dentist", "Firefighter", "Barber",
-    "Social Worker", "Truck Driver", "Plumber", "Retail Manager", "Student",
-    "Retired", "Freelancer", "Doctor", "Salesperson", "Warehouse Associate",
-    "Stay-at-Home Parent", "Administrator" ,"Security Guard", "Small Business Owner", "Artist", "Musician", "Scientist", "Athlete",
-]
-
 
 class Customer:
     """Represents a randomly-generated shopper with demographic info.
@@ -561,9 +430,9 @@ def simulate():
 
         # ── End-of-day restock: replenish low items overnight ───────
         if low:
-            print(f"\n  [OVERNIGHT RESTOCK] {len(low)} low-stock items restocked to 50:")
+            print(f"\n  [OVERNIGHT RESTOCK] {len(low)} low-stock items restocked to {RESTOCK_TARGET}:")
             for p in low:
-                restock_amount = 50 - p.quantity
+                restock_amount = RESTOCK_TARGET - p.quantity
                 if restock_amount > 0:
                     p.quantity += restock_amount
                     print(f"    [OK] +{restock_amount} {p.name} (now {p.quantity})")
@@ -743,12 +612,12 @@ def post_simulation_menu(report_data):
             if not low:
                 print("\n  [OK] No items need restocking.")
             else:
-                print(f"\n  Restocking {len(low)} low-stock items to 50 units...")
+                print(f"\n  Restocking {len(low)} low-stock items to {RESTOCK_TARGET} units...")
                 for p in low:
-                    restock_amount = 50 - p.quantity
+                    restock_amount = RESTOCK_TARGET - p.quantity
                     if restock_amount > 0:
                         restock(p.id, restock_amount)
-                print("  [OK] All low-stock items restocked to 50.")
+                print(f"  [OK] All low-stock items restocked to {RESTOCK_TARGET}.")
 
         elif choice == "4":
             pid = input("  Product ID: ").strip()

@@ -1,5 +1,6 @@
 import random
 import string
+from config import CONFIG
 
 
 # Each entry holds a product ID (key) and the Product object (value).
@@ -219,10 +220,10 @@ def generate_id():
 
 # ─── Inventory Manager ─────────────────────────────────────────────
 
-LOW_STOCK_THRESHOLD = 10
+LOW_STOCK_THRESHOLD = CONFIG["low_stock_threshold"]
 
-inventory = HashMap(97)
-categories = HashMap(31)
+inventory = HashMap(CONFIG["inventory_map_size"])
+categories = HashMap(CONFIG["categories_map_size"])
 
 
 # ─── Helper Functions ───────────────────────────────────────────────

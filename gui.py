@@ -16,6 +16,7 @@ import random
 import time
 import threading
 
+from config import CONFIG
 from inventory import (
     seed_inventory, inventory, purchase, restock,
     print_inventory, get_low_stock, get_total_value,
@@ -28,7 +29,8 @@ from simulate_shopping import (
     random_purchase_amount, PROFESSION_TO_PROFILE,
     DAY_NAMES, DAY_TRAFFIC, DELIVERY_DAYS, WAREHOUSE_STOCK,
     process_delivery, friday_sale_suggestions, apply_sales,
-    HIGH_STOCK_THRESHOLD, SALE_DISCOUNT
+    HIGH_STOCK_THRESHOLD, SALE_DISCOUNT,
+    RESTOCK_TARGET, DELIVERY_RESTOCK_MAX
 )
 
 
@@ -481,7 +483,7 @@ class MiniMeijerApp:
         tk.Label(top, text="Products at or below 10 units",
                  font=FONT_HEADER, bg=BG, fg=YELLOW).pack(side=tk.LEFT)
 
-        tk.Button(top, text="Auto-Restock All to 50", font=FONT_BOLD,
+        tk.Button(top, text=f"Auto-Restock All to {RESTOCK_TARGET}", font=FONT_BOLD,
                   bg=GREEN, fg=BG, relief=tk.FLAT, padx=12,
                   command=self._auto_restock
                   ).pack(side=tk.RIGHT)
@@ -599,13 +601,13 @@ class MiniMeijerApp:
             # ── Delivery truck ──────────────────────────────────────
             if day_name in DELIVERY_DAYS:
                 self._log(f"\n  DELIVERY TRUCK -- {day_name} Morning\n", "warning")
-                self._log(f"  (Only restocking items with 25 or fewer units)\n", "dim")
+                self._log(f"  (Only restocking items with {DELIVERY_RESTOCK_MAX} or fewer units)\n", "dim")
                 total_delivered = 0
                 for category, units in WAREHOUSE_STOCK.items():
                     products_in_cat = [
                         e.value for e in inventory.all_entries()
                         if e.value.category == category
-                            and e.value.quantity <= 25
+                            and e.value.quantity <= DELIVERY_RESTOCK_MAX
                     ]
                     if not products_in_cat:
                         continue
@@ -709,7 +711,7 @@ class MiniMeijerApp:
                     self._log(f"  >> {customer.first_name}: "
                               f"{customer_items} items -- ${customer_total:,.2f}\n", "dim")
 
-                    time.sleep(0.05)  # Faster for 7 days
+                    time.sleep(CONFIG["gui_delay"])
 
                 sales_by_time_block[block_label] = (
                     sales_by_time_block.get(block_label, 0) + block_revenue
@@ -724,9 +726,9 @@ class MiniMeijerApp:
             day_restocked = 0
             low = get_low_stock()
             if low:
-                self._log(f"\n  [OVERNIGHT RESTOCK] {len(low)} items restocked to 50:\n", "warning")
+                self._log(f"\n  [OVERNIGHT RESTOCK] {len(low)} items restocked to {RESTOCK_TARGET}:\n", "warning")
                 for p in low:
-                    restock_amount = 50 - p.quantity
+                    restock_amount = RESTOCK_TARGET - p.quantity
                     if restock_amount > 0:
                         p.quantity += restock_amount
                         day_restocked += restock_amount
@@ -944,7 +946,7 @@ class MiniMeijerApp:
         self.low_tree.tag_configure("warn", foreground=YELLOW)
 
     def _auto_restock(self):
-        """Restock all low items to 50 units."""
+        """Restock all low items to RESTOCK_TARGET units."""
         low = get_low_stock()
         if not low:
             messagebox.showinfo("All Good", "No items need restocking.")
@@ -952,7 +954,7 @@ class MiniMeijerApp:
 
         count = 0
         for p in low:
-            amount = 50 - p.quantity
+            amount = RESTOCK_TARGET - p.quantity
             if amount > 0:
                 restock(p.id, amount)
                 count += 1
@@ -964,7 +966,7 @@ class MiniMeijerApp:
         if self.report_data:
             self.stat_cards["inv_value"].config(text=f"${get_total_value():,.2f}")
 
-        messagebox.showinfo("Restocked", f"Restocked {count} items to 50 units each.")
+        messagebox.showinfo("Restocked", f"Restocked {count} items to {RESTOCK_TARGET} units each.")
 
     def _log(self, text, tag=None):
         """Append text to the simulation log (thread-safe)."""
