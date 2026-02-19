@@ -6,6 +6,8 @@ Provides a windowed interface with tabs for:
   - Dashboard  (summary stats + time block chart)
   - Inventory  (full product table with search/filter)
   - Simulation Log  (scrollable feed of every transaction)
+  - Warehouse  (stock per category + daily reports)
+  - Customer Activity  (real-time shopper panel)
   - Low Stock  (products that need restocking)
   - Report     (detailed sales breakdown)
 """
@@ -30,7 +32,8 @@ from simulate_shopping import (
     DAY_NAMES, DAY_TRAFFIC, DELIVERY_DAYS, WAREHOUSE_STOCK,
     process_delivery, friday_sale_suggestions, apply_sales,
     HIGH_STOCK_THRESHOLD, SALE_DISCOUNT,
-    RESTOCK_TARGET, DELIVERY_RESTOCK_MAX
+    RESTOCK_TARGET, DELIVERY_RESTOCK_MAX,
+    WEEKEND_ALCOHOL_MARKUP
 )
 
 
@@ -89,6 +92,7 @@ class MiniMeijerApp:
         self._build_inventory_tab()
         self._build_simulation_tab()
         self._build_warehouse_tab()
+        self._build_activity_tab()
         self._build_low_stock_tab()
         self._build_report_tab()
 
@@ -469,7 +473,264 @@ class MiniMeijerApp:
 
         dt.configure(state=tk.DISABLED)
 
-    # ─── Tab 5: Low Stock ─────────────────────────────────────────
+    # ─── Tab 5: Customer Activity ─────────────────────────────────
+
+    def _build_activity_tab(self):
+        """Build the real-time customer activity panel with history log."""
+        frame = tk.Frame(self.notebook, bg=BG)
+        self.notebook.add(frame, text="  Customer Activity  ")
+
+        # PanedWindow: live panel (top) + history log (bottom)
+        pane = tk.PanedWindow(frame, orient=tk.VERTICAL, bg=BG,
+                              sashwidth=6, sashrelief=tk.FLAT)
+        pane.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # ════════════════════════════════════════════════════════════
+        # TOP HALF: Live customer card + cart
+        # ════════════════════════════════════════════════════════════
+        live_frame = tk.Frame(pane, bg=BG)
+        pane.add(live_frame, minsize=200)
+
+        # Top info bar
+        top = tk.Frame(live_frame, bg=BG)
+        top.pack(fill=tk.X)
+
+        tk.Label(top, text="Live Customer Activity",
+                 font=FONT_HEADER, bg=BG, fg=TEAL).pack(side=tk.LEFT)
+
+        self.activity_status = tk.Label(
+            top, text="  Waiting for simulation...",
+            font=FONT, bg=BG, fg=FG_DIM
+        )
+        self.activity_status.pack(side=tk.RIGHT)
+
+        # Current customer card
+        card = tk.Frame(live_frame, bg=BG_CARD, padx=15, pady=12)
+        card.pack(fill=tk.X, pady=(8, 6))
+
+        # Row 1: name + profession
+        row1 = tk.Frame(card, bg=BG_CARD)
+        row1.pack(fill=tk.X)
+
+        tk.Label(row1, text="Customer:", font=FONT_BOLD,
+                 bg=BG_CARD, fg=FG_DIM).pack(side=tk.LEFT)
+        self.act_name = tk.Label(row1, text="--", font=FONT_BOLD,
+                                 bg=BG_CARD, fg=ACCENT)
+        self.act_name.pack(side=tk.LEFT, padx=(6, 20))
+
+        tk.Label(row1, text="Profession:", font=FONT_BOLD,
+                 bg=BG_CARD, fg=FG_DIM).pack(side=tk.LEFT)
+        self.act_profession = tk.Label(row1, text="--", font=FONT_BOLD,
+                                       bg=BG_CARD, fg=PURPLE)
+        self.act_profession.pack(side=tk.LEFT, padx=(6, 0))
+
+        # Row 2: profile + age + race
+        row2 = tk.Frame(card, bg=BG_CARD)
+        row2.pack(fill=tk.X, pady=(6, 0))
+
+        tk.Label(row2, text="Profile:", font=FONT,
+                 bg=BG_CARD, fg=FG_DIM).pack(side=tk.LEFT)
+        self.act_profile = tk.Label(row2, text="--", font=FONT,
+                                    bg=BG_CARD, fg=TEAL)
+        self.act_profile.pack(side=tk.LEFT, padx=(6, 20))
+
+        tk.Label(row2, text="Age:", font=FONT,
+                 bg=BG_CARD, fg=FG_DIM).pack(side=tk.LEFT)
+        self.act_age = tk.Label(row2, text="--", font=FONT,
+                                bg=BG_CARD, fg=FG)
+        self.act_age.pack(side=tk.LEFT, padx=(6, 20))
+
+        tk.Label(row2, text="Race:", font=FONT,
+                 bg=BG_CARD, fg=FG_DIM).pack(side=tk.LEFT)
+        self.act_race = tk.Label(row2, text="--", font=FONT,
+                                 bg=BG_CARD, fg=FG)
+        self.act_race.pack(side=tk.LEFT, padx=(6, 0))
+
+        # Row 3: running total
+        row3 = tk.Frame(card, bg=BG_CARD)
+        row3.pack(fill=tk.X, pady=(6, 0))
+
+        tk.Label(row3, text="Cart Total:", font=FONT_BOLD,
+                 bg=BG_CARD, fg=FG_DIM).pack(side=tk.LEFT)
+        self.act_total = tk.Label(row3, text="$0.00", font=FONT_BOLD,
+                                  bg=BG_CARD, fg=GREEN)
+        self.act_total.pack(side=tk.LEFT, padx=(6, 20))
+
+        tk.Label(row3, text="Items:", font=FONT_BOLD,
+                 bg=BG_CARD, fg=FG_DIM).pack(side=tk.LEFT)
+        self.act_items_count = tk.Label(row3, text="0", font=FONT_BOLD,
+                                        bg=BG_CARD, fg=GREEN)
+        self.act_items_count.pack(side=tk.LEFT, padx=(6, 0))
+
+        # Cart items table
+        cart_cols = ("item", "qty", "price", "subtotal", "status")
+        self.act_tree = ttk.Treeview(live_frame, columns=cart_cols,
+                                     show="headings",
+                                     style="Dark.Treeview", height=6)
+        self.act_tree.heading("item",     text="Product")
+        self.act_tree.heading("qty",      text="Qty")
+        self.act_tree.heading("price",    text="Unit Price")
+        self.act_tree.heading("subtotal", text="Subtotal")
+        self.act_tree.heading("status",   text="Status")
+
+        self.act_tree.column("item",     width=200, anchor=tk.W)
+        self.act_tree.column("qty",      width=60,  anchor=tk.E)
+        self.act_tree.column("price",    width=100, anchor=tk.E)
+        self.act_tree.column("subtotal", width=100, anchor=tk.E)
+        self.act_tree.column("status",   width=120, anchor=tk.CENTER)
+
+        self.act_tree.tag_configure("bought", foreground=GREEN)
+        self.act_tree.tag_configure("failed", foreground=RED)
+
+        self.act_tree.pack(fill=tk.BOTH, expand=True, pady=(4, 0))
+
+        # ════════════════════════════════════════════════════════════
+        # BOTTOM HALF: Customer history log (expandable by day)
+        # ════════════════════════════════════════════════════════════
+        history_frame = tk.Frame(pane, bg=BG)
+        pane.add(history_frame, minsize=180)
+
+        tk.Label(history_frame, text="Customer History",
+                 font=FONT_HEADER, bg=BG, fg=ACCENT).pack(anchor=tk.W)
+
+        # History treeview: Day > Customer (with items as children)
+        hist_cols = ("detail", "spent", "items")
+        self.hist_tree = ttk.Treeview(history_frame, columns=hist_cols,
+                                      style="Dark.Treeview", height=12)
+        self.hist_tree.heading("#0",     text="Customer / Item")
+        self.hist_tree.heading("detail", text="Info")
+        self.hist_tree.heading("spent",  text="Spent")
+        self.hist_tree.heading("items",  text="Items")
+
+        self.hist_tree.column("#0",     width=280, anchor=tk.W)
+        self.hist_tree.column("detail", width=280, anchor=tk.W)
+        self.hist_tree.column("spent",  width=100, anchor=tk.E)
+        self.hist_tree.column("items",  width=60,  anchor=tk.E)
+
+        self.hist_tree.tag_configure("day_node",   foreground=ACCENT,
+                                     font=("Consolas", 10, "bold"))
+        self.hist_tree.tag_configure("high_roller", foreground=YELLOW,
+                                     font=("Consolas", 10, "bold"))
+        self.hist_tree.tag_configure("customer",   foreground=FG)
+        self.hist_tree.tag_configure("item_ok",    foreground=GREEN)
+        self.hist_tree.tag_configure("item_fail",  foreground=RED)
+
+        hist_scroll = ttk.Scrollbar(history_frame, orient=tk.VERTICAL,
+                                    command=self.hist_tree.yview)
+        self.hist_tree.configure(yscrollcommand=hist_scroll.set)
+
+        self.hist_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True,
+                            pady=(6, 0))
+        hist_scroll.pack(side=tk.RIGHT, fill=tk.Y, pady=(6, 0))
+
+        # Storage for per-day customer records built during simulation
+        self._day_customers_log = []  # list of dicts per customer
+        self._hist_day_nodes = {}     # day_name -> treeview node id
+
+    def _update_activity_customer(self, customer, profile_name, customer_num, day_name, block_label):
+        """Update the activity panel with a new customer (called on main thread)."""
+        self.act_name.config(text=f"#{customer_num}  {customer.first_name} {customer.last_name}")
+        self.act_profession.config(text=customer.profession)
+        self.act_profile.config(text=profile_name)
+        self.act_age.config(text=str(customer.age))
+        self.act_race.config(text=customer.race)
+        self.act_total.config(text="$0.00")
+        self.act_items_count.config(text="0")
+        self.act_tree.delete(*self.act_tree.get_children())
+        self.activity_status.config(
+            text=f"{day_name} | {block_label}", fg=ACCENT
+        )
+
+    def _update_activity_item(self, product_name, qty, unit_price, subtotal, success):
+        """Add an item row to the activity cart table (called on main thread)."""
+        tag = "bought" if success else "failed"
+        status = "Purchased" if success else "Out of Stock"
+        self.act_tree.insert("", tk.END, values=(
+            product_name, qty, f"${unit_price:.2f}",
+            f"${subtotal:.2f}" if success else "--", status
+        ), tags=(tag,))
+        # Auto-scroll to bottom
+        children = self.act_tree.get_children()
+        if children:
+            self.act_tree.see(children[-1])
+
+    def _update_activity_totals(self, total, items):
+        """Update the running cart total and item count (called on main thread)."""
+        self.act_total.config(text=f"${total:,.2f}")
+        self.act_items_count.config(text=str(items))
+
+    def _add_history_day(self, day_name, day_index, customer_records):
+        """Populate the history tree with a full day of customers.
+
+        Called on main thread at the end of each sim day.
+        customer_records: list of dicts with keys:
+            num, name, profession, profile, age, race, total, items_count, cart
+        cart: list of (product_name, qty, unit_price, subtotal, success)
+        """
+        # Find the high roller for this day
+        high_roller_idx = -1
+        high_roller_total = -1
+        for i, rec in enumerate(customer_records):
+            if rec["total"] > high_roller_total:
+                high_roller_total = rec["total"]
+                high_roller_idx = i
+
+        # Reorder so the high roller appears first
+        if high_roller_idx > 0:
+            hr = customer_records.pop(high_roller_idx)
+            customer_records.insert(0, hr)
+            high_roller_idx = 0
+
+        # Day node
+        day_count = len(customer_records)
+        day_total = sum(r["total"] for r in customer_records)
+        day_id = self.hist_tree.insert(
+            "", tk.END,
+            text=f"\U0001F4C5  {day_name} ({day_count} customers)",
+            values=(f"Day {day_index + 1}",
+                    f"${day_total:,.2f}",
+                    sum(r["items_count"] for r in customer_records)),
+            open=False, tags=("day_node",)
+        )
+        self._hist_day_nodes[day_name] = day_id
+
+        # Customer nodes under the day
+        for i, rec in enumerate(customer_records):
+            is_high_roller = (i == high_roller_idx)
+            tag = "high_roller" if is_high_roller else "customer"
+            prefix = "\U0001F451 " if is_high_roller else ""
+            suffix = "  \u2605 HIGH ROLLER" if is_high_roller else ""
+
+            cust_id = self.hist_tree.insert(
+                day_id, tk.END,
+                text=f"{prefix}#{rec['num']}  {rec['name']}{suffix}",
+                values=(
+                    f"{rec['profession']} | {rec['profile']} | Age {rec['age']}",
+                    f"${rec['total']:,.2f}",
+                    rec["items_count"]
+                ),
+                open=False, tags=(tag,)
+            )
+
+            # Item children under each customer
+            for item_name, qty, price, subtotal, success in rec["cart"]:
+                itag = "item_ok" if success else "item_fail"
+                status = "Purchased" if success else "Out of Stock"
+                self.hist_tree.insert(
+                    cust_id, tk.END,
+                    text=f"    {item_name}",
+                    values=(
+                        status,
+                        f"${subtotal:.2f}" if success else "--",
+                        qty
+                    ),
+                    tags=(itag,)
+                )
+
+        # Auto-scroll to latest day
+        self.hist_tree.see(day_id)
+
+    # ─── Tab 6: Low Stock ─────────────────────────────────────────
 
     def _build_low_stock_tab(self):
         """Build the low stock alerts tab."""
@@ -504,7 +765,7 @@ class MiniMeijerApp:
 
         self.low_tree.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
 
-    # ─── Tab 5: Report ──────────────────────────────────────────────
+    # ─── Tab 7: Report ──────────────────────────────────────────────
 
     def _build_report_tab(self):
         """Build the detailed report tab."""
@@ -585,6 +846,10 @@ class MiniMeijerApp:
 
         daily_reports = []
 
+        # Clear customer history from any previous run
+        self.root.after(0, lambda: self.hist_tree.delete(*self.hist_tree.get_children()))
+        self._hist_day_nodes = {}
+
         for day_index, day_name in enumerate(DAY_NAMES):
             traffic = DAY_TRAFFIC[day_name]
             day_revenue = 0.0
@@ -592,6 +857,7 @@ class MiniMeijerApp:
             day_items_sold = 0
             day_failed = 0
             day_delivered = 0
+            day_customer_records = []  # for history log
 
             self._log("\n" + "#" * 58 + "\n", "header")
             self._log(f"  DAY {day_index + 1}: {day_name.upper()}  "
@@ -649,6 +915,17 @@ class MiniMeijerApp:
                     else:
                         self._log("  [--] Sales not applied.\n", "dim")
 
+            # ── Weekend alcohol price surge (Sat & Sun) ─────────────
+            alcohol_originals = {}  # product_id -> original_price
+            if day_name in ("Saturday", "Sunday"):
+                for entry in inventory.all_entries():
+                    p = entry.value
+                    if p.category == "Alcohol":
+                        alcohol_originals[p.id] = p.price
+                        p.price = round(p.price * (1 + WEEKEND_ALCOHOL_MARKUP), 2)
+                self._log(f"\n  [WEEKEND SURGE] Alcohol prices "
+                          f"+{int(WEEKEND_ALCOHOL_MARKUP * 100)}% today\n", "warning")
+
             # ── Time blocks for this day ────────────────────────────
             for block_index, block in enumerate(TIME_BLOCKS):
                 block_label = block["label"]
@@ -673,13 +950,19 @@ class MiniMeijerApp:
                         self._log("  [!] No products left in stock!\n", "error")
                         break
 
-                    cart = pick_products_by_preference(products, profile, block_max_cart)
+                    cart = pick_products_by_preference(products, profile, block_max_cart, customer.age)
 
                     self._log(f"\n  #{customer_num}: ", "customer")
                     self._log(f"{customer}\n", "info")
 
+                    # Update activity panel with new customer
+                    self.root.after(0, self._update_activity_customer,
+                                   customer, profile_name, customer_num,
+                                   day_name, block_label)
+
                     customer_total = 0.0
                     customer_items = 0
+                    customer_cart_log = []  # (name, qty, price, subtotal, success)
 
                     for product in cart:
                         qty = random_purchase_amount()
@@ -702,14 +985,38 @@ class MiniMeijerApp:
 
                             self._log(f"    [OK] {qty}x {product.name} "
                                       f"(${item_cost:.2f})\n", "success")
+                            customer_cart_log.append(
+                                (product.name, qty, product.price, item_cost, True))
+                            self.root.after(0, self._update_activity_item,
+                                           product.name, qty, product.price,
+                                           item_cost, True)
+                            self.root.after(0, self._update_activity_totals,
+                                           customer_total, customer_items)
                         else:
                             self._log(f"    [X] Wanted {qty}x {product.name} "
                                       f"but only {product.quantity} left\n", "error")
+                            customer_cart_log.append(
+                                (product.name, qty, product.price, 0, False))
+                            self.root.after(0, self._update_activity_item,
+                                           product.name, qty, product.price,
+                                           0, False)
                             week_failed += 1
                             day_failed += 1
 
                     self._log(f"  >> {customer.first_name}: "
                               f"{customer_items} items -- ${customer_total:,.2f}\n", "dim")
+
+                    day_customer_records.append({
+                        "num":         customer_num,
+                        "name":        customer.full_name,
+                        "profession":  customer.profession,
+                        "profile":     profile_name,
+                        "age":         customer.age,
+                        "race":        customer.race,
+                        "total":       customer_total,
+                        "items_count": customer_items,
+                        "cart":        customer_cart_log,
+                    })
 
                     time.sleep(CONFIG["gui_delay"])
 
@@ -718,6 +1025,13 @@ class MiniMeijerApp:
                 )
 
             # ── End of day ──────────────────────────────────────────
+            # Revert weekend alcohol prices
+            if alcohol_originals:
+                for entry in inventory.all_entries():
+                    p = entry.value
+                    if p.id in alcohol_originals:
+                        p.price = alcohol_originals[p.id]
+
             sales_by_day[day_name] = day_revenue
             customers_by_day[day_name] = day_customers
             week_customers += day_customers
@@ -737,6 +1051,11 @@ class MiniMeijerApp:
 
             self._log(f"\n  -- End of {day_name}: ${day_revenue:,.2f} revenue, "
                       f"{day_customers} customers --\n", "info")
+
+            # Push this day's customers into the history log
+            records = list(day_customer_records)  # snapshot
+            idx = day_index
+            self.root.after(0, self._add_history_day, day_name, idx, records)
 
             # Build daily report for warehouse tab
             low_stock_count = len(get_low_stock())

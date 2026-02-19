@@ -51,8 +51,33 @@ CONFIG = {
         "Pantry":     60,
         "Snacks":     40,
         "Desserts":   30,
+        "Frozen":     40,
+        "Household":  50,
+        "Kitchen Appliances": 20,
+        "Alcohol":  50,
+    },
+    # ─── Alcohol Age Rules (min_age, max_age per product) ──────────
+    # Customers outside the age range cannot purchase the item.
+    "alcohol_age_rules": {
+        "Tequila":               (21, 28),
+        "Expensive Tequila":     (35, 80),
+        "Hard Seltzer 12-Pack":  (21, 35),
+        "Adult Whiskey":         (40, 80),
+        "Oberon Beer 6-Pack":    (21, 80),
+        "Corona Beer 6-Pack":    (21, 80),
+        "Hard Cider 6-Pack":     (21, 80),
+        "Adult Wine":            (23, 80),
+        "Kid Wine":              (18, 22),
+        "XXL Wine":              (21, 80),
+        "Pink Whitney":          (21, 80),
+        "Taylor Port":           (21, 80),
+        "Red Wine":              (21, 80),
+        "Domestic Beer 12-Pack": (21, 80),
     },
 
+    # ─── Weekend Alcohol Pricing ───────────────────────────────────
+    "weekend_alcohol_markup": 0.20,   # +20% on Saturday & Sunday
+    "steak_wine_chance":      0.70,   # 70% chance to add Red Wine if Steak in cart
     # ─── Time-of-Day Blocks ────────────────────────────────────────
     "time_blocks": [
         {"label": "Morning (7am - 9am)",   "hours": "7:00 - 9:00",   "customers": 8,  "max_cart": 4},
@@ -79,6 +104,7 @@ CONFIG = {
             "category_weights": {
                 "Dairy": 8, "Bakery": 7, "Produce": 7, "Beverages": 5,
                 "Meat": 6, "Pantry": 8, "Snacks": 5, "Desserts": 4, "Household": 3,
+                "Kitchen Appliances": 2, "Alcohol": 2,
             },
         },
         "Retired": {
@@ -90,6 +116,7 @@ CONFIG = {
             "category_weights": {
                 "Dairy": 7, "Bakery": 8, "Produce": 9, "Beverages": 6,
                 "Meat": 5, "Pantry": 7, "Snacks": 3, "Desserts": 4, "Household": 2,
+                "Kitchen Appliances": 1, "Alcohol": 4,
             },
         },
         "Student": {
@@ -101,6 +128,7 @@ CONFIG = {
             "category_weights": {
                 "Dairy": 4, "Bakery": 5, "Produce": 2, "Beverages": 8,
                 "Meat": 3, "Pantry": 7, "Snacks": 9, "Desserts": 7, "Household": 1,
+                "Kitchen Appliances": 1, "Alcohol": 7,
             },
         },
         "Office Worker": {
@@ -112,6 +140,7 @@ CONFIG = {
             "category_weights": {
                 "Dairy": 6, "Bakery": 4, "Produce": 7, "Beverages": 5,
                 "Meat": 8, "Pantry": 7, "Snacks": 4, "Desserts": 5, "Household": 3,
+                "Kitchen Appliances": 3, "Alcohol": 6,
             },
         },
         "Trade Worker": {
@@ -123,6 +152,7 @@ CONFIG = {
             "category_weights": {
                 "Dairy": 5, "Bakery": 2, "Produce": 4, "Beverages": 10,
                 "Meat": 8, "Pantry": 6, "Snacks": 6, "Desserts": 3, "Household": 1,
+                "Kitchen Appliances": 1, "Alcohol": 8,
             },
         },
         "Night Shift": {
@@ -134,6 +164,7 @@ CONFIG = {
             "category_weights": {
                 "Dairy": 5, "Bakery": 3, "Produce": 3, "Beverages": 8,
                 "Meat": 4, "Pantry": 5, "Snacks": 8, "Desserts": 1, "Household": 2,
+                "Kitchen Appliances": 1, "Alcohol": 5,
             },
         },
     },

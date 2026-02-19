@@ -38,6 +38,10 @@ PROFESSIONS          = CONFIG["professions"]
 RESTOCK_TARGET       = CONFIG["restock_target"]
 DELIVERY_RESTOCK_MAX = CONFIG["delivery_restock_max"]
 
+ALCOHOL_AGE_RULES    = CONFIG["alcohol_age_rules"]
+STEAK_WINE_CHANCE    = CONFIG["steak_wine_chance"]
+WEEKEND_ALCOHOL_MARKUP = CONFIG["weekend_alcohol_markup"]
+
 # ─── Week Schedule ─────────────────────────────────────────────────
 
 DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
@@ -181,17 +185,20 @@ def get_profile_for_time_block(block_index):
     return chosen, SHOPPER_PROFILES[chosen]
 
 
-def pick_products_by_preference(products, profile, max_items):
+def pick_products_by_preference(products, profile, max_items, customer_age=None):
     """Select products for a customer's cart based on profile preferences.
 
     Uses the profile's category_weights to bias product selection,
-    basket_size to set cart limits, and price_threshold to penalise
-    items that are too expensive for this customer type.
+    basket_size to set cart limits, price_threshold to penalise
+    items that are too expensive, and alcohol_age_rules to enforce
+    per-product age restrictions.  If the customer buys a Steak,
+    Red Wine is added with a high probability (steak-wine pairing).
 
     Args:
-        products:   List of all available Product objects.
-        profile:    The shopper profile dict.
-        max_items:  Fallback max if profile has no basket_size.
+        products:      List of all available Product objects.
+        profile:       The shopper profile dict.
+        max_items:     Fallback max if profile has no basket_size.
+        customer_age:  Customer's age (used for age-restricted items).
 
     Returns:
         A list of Product objects for the cart.
@@ -207,6 +214,17 @@ def pick_products_by_preference(products, profile, max_items):
     weights = []
     for p in products:
         w = cat_weights.get(p.category, 3)
+
+        # Per-product alcohol age restriction
+        if p.category == "Alcohol" and customer_age is not None:
+            rule = ALCOHOL_AGE_RULES.get(p.name)
+            if rule:
+                min_age, max_age = rule
+                if customer_age < min_age or customer_age > max_age:
+                    w = 0
+            elif customer_age < 21:
+                w = 0  # Default: must be 21+ for unlisted alcohol
+
         # Reduce weight for items above the customer's price comfort zone
         if p.price > price_cap:
             if random.random() < skip_chance:
@@ -238,6 +256,18 @@ def pick_products_by_preference(products, profile, max_items):
         cart.append(products[available[chosen_idx]])
         available.pop(chosen_idx)
         available_weights.pop(chosen_idx)
+
+    # ── Steak → Red Wine pairing ────────────────────────────────
+    has_steak = any(p.name == "Steak" for p in cart)
+    has_red_wine = any(p.name == "Red Wine" for p in cart)
+    if has_steak and not has_red_wine:
+        age_ok = customer_age is None or customer_age >= 21
+        if age_ok and random.random() < STEAK_WINE_CHANCE:
+            # Find Red Wine in the full product list
+            for p in products:
+                if p.name == "Red Wine" and p.quantity > 0:
+                    cart.append(p)
+                    break
 
     return cart
 
@@ -357,6 +387,16 @@ def simulate():
                 else:
                     print("  [--] Sales not applied. Prices unchanged.")
 
+        # ── Weekend alcohol price surge (Sat & Sun) ────────────────
+        alcohol_originals = {}  # product_id -> original_price
+        if day_name in ("Saturday", "Sunday"):
+            for entry in inventory.all_entries():
+                p = entry.value
+                if p.category == "Alcohol":
+                    alcohol_originals[p.id] = p.price
+                    p.price = round(p.price * (1 + WEEKEND_ALCOHOL_MARKUP), 2)
+            print(f"\n  [WEEKEND SURGE] Alcohol prices +{int(WEEKEND_ALCOHOL_MARKUP * 100)}% today")
+
         # ── Run each time block for this day ───────────────────────
         for block_index, block in enumerate(TIME_BLOCKS):
             block_label = block["label"]
@@ -380,7 +420,7 @@ def simulate():
                     print("  [!] No products left in stock!")
                     break
 
-                cart = pick_products_by_preference(products, profile, block_max_cart)
+                cart = pick_products_by_preference(products, profile, block_max_cart, customer.age)
 
                 print(f"\n  Customer #{customer_num}: {customer}")
 
@@ -420,6 +460,13 @@ def simulate():
             )
 
         # ── End of day summary ──────────────────────────────────────
+        # Revert weekend alcohol prices
+        if alcohol_originals:
+            for entry in inventory.all_entries():
+                p = entry.value
+                if p.id in alcohol_originals:
+                    p.price = alcohol_originals[p.id]
+
         sales_by_day[day_name] = day_revenue
         customers_by_day[day_name] = day_customers
         week_customers += day_customers
