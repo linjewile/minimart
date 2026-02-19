@@ -30,13 +30,37 @@ CONFIG = {
     ],
 
     "day_traffic": {
-        "Monday":    0.8,
-        "Tuesday":   0.9,
-        "Wednesday": 0.85,
-        "Thursday":  0.95,
-        "Friday":    1.1,
-        "Saturday":  1.4,
-        "Sunday":    1.2,
+        "Monday":    0.90,   # 25 customers
+        "Tuesday":   1.10,   # 31 customers
+        "Wednesday": 1.00,   # 30 customers
+        "Thursday":  1.30,   # 37 customers
+        "Friday":    1.00,   # overridden by high_traffic_blocks
+        "Saturday":  1.00,   # overridden by high_traffic_blocks
+        "Sunday":    1.00,   # overridden by high_traffic_blocks
+    },
+
+    # ─── High-Traffic Day Overrides (exact per-block counts) ───────
+    # Fri / Sat / Sun always see exactly 75 customers.
+    # Friday evening is the heaviest block of the entire week.
+    "high_traffic_blocks": {
+        "Friday": [
+            {"customers": 12, "max_cart":  5},   # Morning
+            {"customers": 10, "max_cart":  4},   # Midday
+            {"customers": 40, "max_cart":  8},   # Evening -- Friday rush
+            {"customers": 13, "max_cart":  5},   # Night
+        ],
+        "Saturday": [
+            {"customers": 20, "max_cart":  6},   # Morning
+            {"customers": 18, "max_cart":  5},   # Midday
+            {"customers": 25, "max_cart":  8},   # Evening
+            {"customers": 12, "max_cart":  4},   # Night
+        ],
+        "Sunday": [
+            {"customers": 18, "max_cart":  5},   # Morning
+            {"customers": 20, "max_cart":  5},   # Midday
+            {"customers": 22, "max_cart":  7},   # Evening
+            {"customers": 15, "max_cart":  4},   # Night
+        ],
     },
 
     "delivery_days": ["Tuesday"],
@@ -84,10 +108,10 @@ CONFIG = {
     "steak_wine_chance":      0.70,   # 70% chance to add Red Wine if Steak in cart
     # ─── Time-of-Day Blocks ────────────────────────────────────────
     "time_blocks": [
-        {"label": "Morning (7am - 9am)",   "hours": "7:00 - 9:00",   "customers": 8,  "max_cart": 4},
-        {"label": "Midday (11am - 1pm)",   "hours": "11:00 - 13:00", "customers": 5,  "max_cart": 3},
-        {"label": "Evening (4pm - 7pm)",   "hours": "16:00 - 19:00", "customers": 12, "max_cart": 6},
-        {"label": "Night (8pm - 10pm)",    "hours": "20:00 - 22:00", "customers": 3,  "max_cart": 3},
+        {"label": "Morning (7am - 9am)",   "hours": "7:00 - 9:00",   "customers": 9,  "max_cart": 4},
+        {"label": "Midday (11am - 1pm)",   "hours": "11:00 - 13:00", "customers": 7,  "max_cart": 3},
+        {"label": "Evening (4pm - 7pm)",   "hours": "16:00 - 19:00", "customers": 10, "max_cart": 6},
+        {"label": "Night (8pm - 10pm)",    "hours": "20:00 - 22:00", "customers": 4,  "max_cart": 3},
     ],
 
     # ─── Purchase Amount Weights ───────────────────────────────────
@@ -234,9 +258,10 @@ CONFIG = {
     # ─── Profession List (for random customer generation) ──────────
     "professions": [
         "Teacher", "Nurse", "Software Engineer", "Electrician", "Accountant",
-        "Chef", "Mechanic", "Pharmacist", "Graphic Designer", "Data Analyst", "Retail Manager","Postman", "Receptionist", 
-        "Cashier", "Construction Worker", "Dentist", "Firefighter", "Barber", "Braider",
-        "Social Worker", "Truck Driver", "Plumber", "Retail Manager", "Student", "Researcher",
+        "Chef", "Mechanic", "Pharmacist", "Graphic Designer", "Data Analyst",
+        "Retail Manager", "Postman", "Receptionist", "Cashier", "Construction Worker",
+        "Dentist", "Firefighter", "Barber", "Braider",
+        "Social Worker", "Truck Driver", "Plumber", "Student", "Researcher",
         "Retired", "Freelancer", "Doctor", "Salesperson", "Warehouse Associate","Podcaster",
         "Stay-at-Home Parent", "Administrator", "Security Guard", "Police Officer","Lawyer",
         "Small Business Owner", "Artist", "Musician", "Scientist", "Athlete", "Coach", "Landscape Worker", "Veterinarian", "Flight Attendant", "Pilot", "Journalist", "Author",

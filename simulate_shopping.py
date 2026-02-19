@@ -41,44 +41,7 @@ DELIVERY_RESTOCK_MAX = CONFIG["delivery_restock_max"]
 ALCOHOL_AGE_RULES    = CONFIG["alcohol_age_rules"]
 STEAK_WINE_CHANCE    = CONFIG["steak_wine_chance"]
 ALCOHOL_SURGE_RATES  = CONFIG["alcohol_surge_rates"]
-
-# ─── Week Schedule ─────────────────────────────────────────────────
-
-DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-
-# Customer traffic multiplier per day (1.0 = normal)
-# Weekends are busier, midweek is slower
-DAY_TRAFFIC = {
-    "Monday":    0.8,
-    "Tuesday":   0.9,
-    "Wednesday": 0.85,
-    "Thursday":  0.95,
-    "Friday":    1.1,
-    "Saturday":  1.4,
-    "Sunday":    1.2,
-}
-
-# ─── Warehouse & Delivery System ──────────────────────────────────
-# The warehouse holds backup stock. A delivery truck arrives Tuesday
-# morning BEFORE the store opens, restocking shelves from the
-# warehouse.
-
-WAREHOUSE_STOCK = {
-    # category: units delivered per truck
-    "Dairy":      60,
-    "Produce":    80,
-    "Meat":       40,
-    "Bakery":     50,
-    "Beverages":  70,
-    "Pantry":     60,
-    "Snacks":     40,
-    "Desserts":   30,
-}
-
-DELIVERY_DAYS = ["Tuesday"]              # Truck arrives Tuesday morning
-
-HIGH_STOCK_THRESHOLD = 50   # Products above this on Friday get sale suggestion
-SALE_DISCOUNT = 0.50        # 50% off suggested sale price
+HIGH_TRAFFIC_BLOCKS  = CONFIG["high_traffic_blocks"]
 
 
 def process_delivery(day_name):
@@ -123,13 +86,12 @@ def process_delivery(day_name):
 
 
 def friday_sale_suggestions():
-    """Check inventory for items that are overstocked relative to the store average.
+    """Pick up to 5 overstocked items to put on sale Friday.
 
-    Instead of using a flat threshold (which always flags the same
-    high-capacity items like Bananas/Sparkling Water), this compares
-    each product's quantity to the store-wide average.  Items with
-    more than 1.5× the average are considered overstocked.  The top 5
-    are returned, with random tiebreaking so the list varies each week.
+    A product qualifies if its quantity exceeds the overstock line
+    (1.5× the store-wide average, or HIGH_STOCK_THRESHOLD, whichever
+    is higher).  From all qualifying products, 5 are chosen at random
+    so the sale list varies every week.
     """
     all_products = [e.value for e in inventory.all_entries()]
     if not all_products:
@@ -138,17 +100,11 @@ def friday_sale_suggestions():
     avg_qty = sum(p.quantity for p in all_products) / len(all_products)
     overstock_line = max(avg_qty * 1.5, HIGH_STOCK_THRESHOLD)
 
-    candidates = []
-    for p in all_products:
-        if p.quantity >= overstock_line:
-            sale_price = round(p.price * (1 - SALE_DISCOUNT), 2)
-            # Score = how far above the overstock line (normalised)
-            excess = p.quantity - overstock_line
-            candidates.append((p, sale_price, excess))
+    candidates = [p for p in all_products if p.quantity >= overstock_line]
 
-    # Sort by excess descending, random tiebreaker
-    candidates.sort(key=lambda x: (x[2], random.random()), reverse=True)
-    return [(p, sp) for p, sp, _ in candidates[:5]]
+    # Randomly pick up to 5 from all qualifying products
+    chosen = random.sample(candidates, min(5, len(candidates)))
+    return [(p, round(p.price * (1 - SALE_DISCOUNT), 2)) for p in chosen]
 
 
 def print_sale_suggestions(suggestions):
@@ -251,7 +207,8 @@ def pick_products_by_preference(products, profile, max_items, customer_age=None)
 
     # Cart size from profile basket_size, capped by time-block max_items
     basket_lo, basket_hi = profile.get("basket_size", (1, max_items))
-    num_items = random.randint(basket_lo, min(basket_hi, max_items, len(products)))
+    upper = min(basket_hi, max_items, len(products))
+    num_items = random.randint(min(basket_lo, upper), upper)
 
     # Weighted sampling without replacement
     cart = []
@@ -340,8 +297,8 @@ def simulate():
     """Run a full 7-day (Monday-Sunday) shopping simulation.
 
     Each day runs through all 4 time blocks with customer counts
-    scaled by the day's traffic multiplier.  Delivery trucks arrive
-    on Tuesday and Friday mornings before the store opens.  On Friday
+    scaled by the day's traffic multiplier.  A delivery truck arrives
+    on Tuesday morning before the store opens.  On Friday
     evening, high-inventory items are flagged for sale.
     """
     # ── Step 1: Load inventory ──────────────────────────────────────
@@ -411,11 +368,16 @@ def simulate():
             print(f"\n  [ALCOHOL SURGE] Alcohol prices +{int(surge_rate * 100)}% today ({day_name})")
 
         # ── Run each time block for this day ───────────────────────
+        high_blocks = HIGH_TRAFFIC_BLOCKS.get(day_name)
         for block_index, block in enumerate(TIME_BLOCKS):
             block_label = block["label"]
-            # Scale customer count by day traffic, minimum 1
-            block_customers = max(1, int(block["customers"] * traffic))
-            block_max_cart = block["max_cart"]
+            # High-traffic days (Fri/Sat/Sun) use fixed counts
+            if high_blocks:
+                block_customers = high_blocks[block_index]["customers"]
+                block_max_cart  = high_blocks[block_index]["max_cart"]
+            else:
+                block_customers = max(1, int(block["customers"] * traffic))
+                block_max_cart  = block["max_cart"]
             block_revenue = 0.0
 
             print(f"\n  --- {day_name} | {block_label} "

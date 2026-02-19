@@ -3,7 +3,6 @@ gui.py
 ──────
 Tkinter GUI for Mini Meijer grocery store simulation.
 Provides a windowed interface with tabs for:
-  - Dashboard  (summary stats + time block chart)
   - Inventory  (full product table with search/filter)
   - Simulation Log  (scrollable feed of every transaction)
   - Warehouse  (stock per category + daily reports)
@@ -18,45 +17,54 @@ import random
 import time
 import threading
 
+import matplotlib
+matplotlib.use("Agg")  # Non-interactive backend (render to image)
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
+
 from config import CONFIG
 from inventory import (
     seed_inventory, inventory, purchase, restock,
-    print_inventory, get_low_stock, get_total_value,
-    get_products_by_category, search_by_name, add_product,
-    get_all_products
+    get_low_stock, get_total_value, get_all_products
 )
 from simulate_shopping import (
     TIME_BLOCKS, SHOPPER_PROFILES, Customer,
     get_profile_for_time_block, pick_products_by_preference,
-    random_purchase_amount, PROFESSION_TO_PROFILE,
-    DAY_NAMES, DAY_TRAFFIC, DELIVERY_DAYS, WAREHOUSE_STOCK,
-    process_delivery, friday_sale_suggestions, apply_sales,
+    random_purchase_amount, DAY_NAMES, DAY_TRAFFIC,
+    DELIVERY_DAYS, WAREHOUSE_STOCK,
+    friday_sale_suggestions, apply_sales,
     HIGH_STOCK_THRESHOLD, SALE_DISCOUNT,
     RESTOCK_TARGET, DELIVERY_RESTOCK_MAX,
-    ALCOHOL_SURGE_RATES
+    ALCOHOL_SURGE_RATES, HIGH_TRAFFIC_BLOCKS
 )
 
 
-# ─── Color Palette ──────────────────────────────────────────────────
+# ─── Color Palette (Light Pastel) ────────────────────────────────────
 
-BG          = "#1e1e2e"      # Dark background
-BG_CARD     = "#2a2a3d"      # Card/panel background
-FG          = "#cdd6f4"      # Main text
-FG_DIM      = "#6c7086"      # Dimmed text
-ACCENT      = "#89b4fa"      # Blue accent
-GREEN       = "#a6e3a1"      # Success / positive
-RED         = "#f38ba8"      # Error / negative
-YELLOW      = "#f9e2af"      # Warning
-PURPLE      = "#cba6f7"      # Highlights
-TEAL        = "#94e2d5"      # Secondary accent
-HEADER_BG   = "#313244"      # Table header bg
-ROW_ALT     = "#252537"      # Alternating row bg
+BG          = "#f5f0e6"      # Warm cream background
+BG_CARD     = "#ffffff"      # White card/panel
+FG          = "#1a1a1a"      # Dark text
+FG_DIM      = "#7a7a7a"      # Dimmed text
+ACCENT      = "#2d6a4f"      # Deep sage green accent
+GREEN       = "#52b788"      # Fresh green / success
+RED         = "#d45d5d"      # Soft red / error
+YELLOW      = "#e8b931"      # Warm gold / warning
+PURPLE      = "#7b68a8"      # Soft purple
+TEAL        = "#3d9e8f"      # Teal secondary
+HEADER_BG   = "#eae5d9"      # Table header bg
+ROW_ALT     = "#f9f6f0"      # Alternating row bg
+SIDEBAR_BG  = "#1a1a2e"      # Dark sidebar
+PEACH       = "#f0c9a6"      # Soft peach accent
+MINT        = "#c8e6c0"      # Mint green accent
+CREAM_CARD  = "#fdf8ef"      # Cream card variant
+BORDER      = "#e0dbd0"      # Subtle card border
 
 FONT        = ("Segoe UI", 10)
 FONT_BOLD   = ("Segoe UI", 10, "bold")
-FONT_HEADER = ("Segoe UI", 14, "bold")
-FONT_TITLE  = ("Segoe UI", 18, "bold")
-FONT_MONO   = ("Consolas", 10)
+FONT_HEADER = ("Courier New", 15, "bold")
+FONT_TITLE  = ("Courier New", 20, "bold")
+FONT_MONO   = ("Cascadia Mono", 10)
 FONT_SMALL  = ("Segoe UI", 9)
 
 
@@ -89,7 +97,6 @@ class MiniMeijerApp:
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 0))
 
         # Build each tab
-        self._build_dashboard_tab()
         self._build_blueprint_tab()
         self._build_inventory_tab()
         self._build_simulation_tab()
@@ -104,18 +111,18 @@ class MiniMeijerApp:
     # ─── Styles ─────────────────────────────────────────────────────
 
     def _setup_styles(self):
-        """Configure ttk styles for a dark theme."""
+        """Configure ttk styles for a light pastel theme."""
         style = ttk.Style()
         style.theme_use("clam")
 
         # Notebook
         style.configure("Dark.TNotebook", background=BG, borderwidth=0)
         style.configure("Dark.TNotebook.Tab",
-                         background=BG_CARD, foreground=FG,
+                         background=BG_CARD, foreground=FG_DIM,
                          padding=[16, 8], font=FONT_BOLD)
         style.map("Dark.TNotebook.Tab",
-                   background=[("selected", ACCENT)],
-                   foreground=[("selected", BG)])
+                   background=[("selected", MINT)],
+                   foreground=[("selected", ACCENT)])
 
         # Frames
         style.configure("Dark.TFrame", background=BG)
@@ -125,24 +132,22 @@ class MiniMeijerApp:
         style.configure("Dark.TLabel", background=BG, foreground=FG, font=FONT)
         style.configure("Card.TLabel", background=BG_CARD, foreground=FG, font=FONT)
         style.configure("Header.TLabel", background=BG, foreground=ACCENT, font=FONT_HEADER)
-        style.configure("Stat.TLabel", background=BG_CARD, foreground=GREEN, font=("Segoe UI", 20, "bold"))
-        style.configure("StatLabel.TLabel", background=BG_CARD, foreground=FG_DIM, font=FONT_SMALL)
 
         # Buttons
         style.configure("Accent.TButton",
-                         background=ACCENT, foreground=BG,
+                         background=ACCENT, foreground="#ffffff",
                          font=FONT_BOLD, padding=[12, 6])
         style.map("Accent.TButton",
-                   background=[("active", PURPLE)])
+                   background=[("active", TEAL)])
 
         style.configure("Green.TButton",
-                         background=GREEN, foreground=BG,
+                         background=GREEN, foreground="#ffffff",
                          font=FONT_BOLD, padding=[12, 6])
         style.map("Green.TButton",
                    background=[("active", TEAL)])
 
         style.configure("Red.TButton",
-                         background=RED, foreground=BG,
+                         background=RED, foreground="#ffffff",
                          font=FONT_BOLD, padding=[12, 6])
 
         # Treeview (tables)
@@ -154,132 +159,86 @@ class MiniMeijerApp:
                          background=HEADER_BG, foreground=ACCENT,
                          font=FONT_BOLD, borderwidth=0)
         style.map("Dark.Treeview",
-                   background=[("selected", ACCENT)],
-                   foreground=[("selected", BG)])
+                   background=[("selected", MINT)],
+                   foreground=[("selected", ACCENT)])
 
         # Entry
         style.configure("Dark.TEntry",
                          fieldbackground=BG_CARD, foreground=FG,
                          insertcolor=FG, font=FONT)
 
+        # Progressbar
+        style.configure("BP.Horizontal.TProgressbar",
+                         troughcolor=HEADER_BG, background=GREEN)
+
+        # Scrollbar
+        style.configure("TScrollbar",
+                         background=HEADER_BG, troughcolor=BG,
+                         arrowcolor=FG_DIM)
+
     # ─── Header ─────────────────────────────────────────────────────
 
     def _build_header(self):
         """Build the title bar at the top."""
-        header = tk.Frame(self.root, bg=BG, height=60)
-        header.pack(fill=tk.X, padx=10, pady=(10, 5))
+        header = tk.Frame(self.root, bg=SIDEBAR_BG, height=60)
+        header.pack(fill=tk.X, padx=0, pady=(0, 0))
 
-        tk.Label(header, text="Mini Meijer", font=FONT_TITLE,
-                 bg=BG, fg=ACCENT).pack(side=tk.LEFT)
+        tk.Label(header, text="  🛒  Mini Meijer", font=FONT_TITLE,
+                 bg=SIDEBAR_BG, fg="#ffffff").pack(side=tk.LEFT, padx=(8, 0))
 
         tk.Label(header, text="Grocery Store Simulator", font=FONT,
-                 bg=BG, fg=FG_DIM).pack(side=tk.LEFT, padx=(10, 0), pady=(6, 0))
+                 bg=SIDEBAR_BG, fg="#8888aa").pack(side=tk.LEFT, padx=(10, 0), pady=(6, 0))
 
         # Run Simulation button (right side)
         self.run_btn = tk.Button(
-            header, text="Run Simulation", font=FONT_BOLD,
-            bg=GREEN, fg=BG, activebackground=TEAL, activeforeground=BG,
+            header, text="▶  Run Simulation", font=FONT_BOLD,
+            bg=GREEN, fg="#ffffff", activebackground=TEAL, activeforeground="#ffffff",
             relief=tk.FLAT, padx=16, pady=6,
             command=self._start_simulation
         )
-        self.run_btn.pack(side=tk.RIGHT)
+        self.run_btn.pack(side=tk.RIGHT, padx=(0, 12))
 
         # Load Inventory button
         self.load_btn = tk.Button(
-            header, text="Load Inventory", font=FONT_BOLD,
-            bg=ACCENT, fg=BG, activebackground=PURPLE, activeforeground=BG,
+            header, text="📦  Load Inventory", font=FONT_BOLD,
+            bg=ACCENT, fg="#ffffff", activebackground=TEAL, activeforeground="#ffffff",
             relief=tk.FLAT, padx=16, pady=6,
             command=self._load_inventory
         )
         self.load_btn.pack(side=tk.RIGHT, padx=(0, 10))
 
         # Speed control slider
-        speed_frame = tk.Frame(header, bg=BG)
+        speed_frame = tk.Frame(header, bg=SIDEBAR_BG)
         speed_frame.pack(side=tk.RIGHT, padx=(0, 20))
 
-        tk.Label(speed_frame, text="Sim Speed:", font=FONT_SMALL,
-                 bg=BG, fg=FG_DIM).pack(side=tk.LEFT)
+        tk.Label(speed_frame, text="Speed:", font=FONT_SMALL,
+                 bg=SIDEBAR_BG, fg="#8888aa").pack(side=tk.LEFT)
 
         self.speed_label = tk.Label(speed_frame, text="10x", font=FONT_BOLD,
-                                    bg=BG, fg=TEAL, width=4)
+                                    bg=SIDEBAR_BG, fg=MINT, width=4)
         self.speed_label.pack(side=tk.RIGHT, padx=(4, 0))
 
         self.speed_slider = tk.Scale(
             speed_frame, from_=1, to=20, orient=tk.HORIZONTAL,
             variable=self.sim_speed, showvalue=False,
-            bg=BG, fg=FG, troughcolor=BG_CARD, highlightthickness=0,
-            activebackground=TEAL, sliderrelief=tk.FLAT, length=120,
+            bg=SIDEBAR_BG, fg="#ffffff", troughcolor="#2a2a4e", highlightthickness=0,
+            activebackground=MINT, sliderrelief=tk.FLAT, length=120,
             command=lambda v: self.speed_label.config(text=f"{v}x")
         )
         self.speed_slider.pack(side=tk.LEFT, padx=(4, 0))
 
-    # ─── Tab 1: Dashboard ───────────────────────────────────────────
+    # ─── Tab 1: Store Blueprint ─────────────────────────────────────
 
-    def _build_dashboard_tab(self):
-        """Build the dashboard tab with summary stat cards."""
-        frame = tk.Frame(self.notebook, bg=BG)
-        self.notebook.add(frame, text="  Dashboard  ")
-
-        # Welcome message (shown before simulation)
-        self.dash_welcome = tk.Label(
-            frame, text="Load inventory and run a simulation to see results here.",
-            font=FONT, bg=BG, fg=FG_DIM
-        )
-        self.dash_welcome.pack(pady=40)
-
-        # Stats row (hidden until simulation runs)
-        self.dash_stats_frame = tk.Frame(frame, bg=BG)
-
-        self.stat_cards = {}
-        stats_config = [
-            ("customers",  "Customers Served", "0"),
-            ("items_sold", "Items Sold",       "0"),
-            ("revenue",    "Week Revenue",     "$0.00"),
-            ("failed",     "Failed Purchases", "0"),
-            ("inv_value",  "Inventory Value",  "$0.00"),
-            ("deliveries", "Deliveries",       "0"),
-        ]
-        for key, label, default in stats_config:
-            card = tk.Frame(self.dash_stats_frame, bg=BG_CARD, padx=20, pady=15)
-            card.pack(side=tk.LEFT, padx=8, pady=10, fill=tk.BOTH, expand=True)
-
-            val_lbl = tk.Label(card, text=default, font=("Segoe UI", 20, "bold"),
-                               bg=BG_CARD, fg=GREEN)
-            val_lbl.pack()
-            tk.Label(card, text=label, font=FONT_SMALL,
-                     bg=BG_CARD, fg=FG_DIM).pack()
-            self.stat_cards[key] = val_lbl
-
-        # Time block breakdown
-        self.dash_time_frame = tk.Frame(frame, bg=BG)
-
-        tk.Label(self.dash_time_frame, text="Revenue by Time Block",
-                 font=FONT_HEADER, bg=BG, fg=ACCENT).pack(anchor=tk.W, padx=10, pady=(10, 5))
-
-        self.time_block_canvas = tk.Canvas(self.dash_time_frame, bg=BG,
-                                            highlightthickness=0, height=180)
-        self.time_block_canvas.pack(fill=tk.X, padx=10, pady=5)
-
-        # Daily revenue chart
-        tk.Label(self.dash_time_frame, text="Revenue by Day",
-                 font=FONT_HEADER, bg=BG, fg=ACCENT).pack(anchor=tk.W, padx=10, pady=(10, 5))
-
-        self.day_canvas = tk.Canvas(self.dash_time_frame, bg=BG,
-                                    highlightthickness=0, height=300)
-        self.day_canvas.pack(fill=tk.X, padx=10, pady=5)
-
-    # ─── Tab 2: Store Blueprint ─────────────────────────────────────
-
-    # Blueprint colour constants
-    BP_BG       = "#0a1929"
-    BP_GRID     = "#0f2640"
-    BP_BORDER   = "#4a9eff"
-    BP_SECTION  = "#132f4c"
-    BP_TEXT     = "#e3f2fd"
-    BP_DIM      = "#5c8ab5"
-    BP_ENTRANCE = "#1a3d5c"
-    BP_AISLE    = "#071320"
-    BP_WALL     = "#1b3a5c"
+    # Blueprint colour constants (light pastel)
+    BP_BG       = "#f5f0e6"
+    BP_GRID     = "#ebe6dc"
+    BP_BORDER   = "#2d6a4f"
+    BP_SECTION  = "#ffffff"
+    BP_TEXT     = "#1a1a1a"
+    BP_DIM      = "#7a7a7a"
+    BP_ENTRANCE = "#eae5d9"
+    BP_AISLE    = "#e0dbd0"
+    BP_WALL     = "#d5d0c4"
 
     def _build_blueprint_tab(self):
         """Build the store blueprint floor plan tab."""
@@ -301,11 +260,11 @@ class MiniMeijerApp:
     def _stock_color(self, total_qty):
         """Return (fill_colour, text_colour) based on stock level."""
         if total_qty == 0:
-            return "#3d1111", RED
+            return "#fde8e8", RED
         elif total_qty < 30:
-            return "#3d2e11", RED
+            return "#fef3e0", RED
         elif total_qty < 100:
-            return "#2e3311", YELLOW
+            return "#fef9e7", YELLOW
         else:
             return self.BP_SECTION, GREEN
 
@@ -324,31 +283,31 @@ class MiniMeijerApp:
             canvas.create_text(cx, cy - h * 0.25,
                                text=category.upper(),
                                fill=self.BP_TEXT,
-                               font=("Consolas", 8, "bold"))
+                               font=("Cascadia Mono", 8, "bold"))
             canvas.create_text(cx, cy,
                                text=str(total_qty),
                                fill=qty_color,
-                               font=("Consolas", 16, "bold"))
+                               font=("Cascadia Mono", 16, "bold"))
             canvas.create_text(cx, cy + h * 0.20,
                                text=f"{num_items}p",
                                fill=self.BP_DIM,
-                               font=("Consolas", 7))
+                               font=("Cascadia Mono", 7))
         else:
             # Horizontal layout
             name_size = 8 if len(category) > 10 else 9
             canvas.create_text(cx, cy - h * 0.28,
                                text=category.upper(),
                                fill=self.BP_TEXT,
-                               font=("Consolas", name_size, "bold"))
+                               font=("Cascadia Mono", name_size, "bold"))
             qty_size = 14 if w < 120 else 18
             canvas.create_text(cx, cy + h * 0.02,
                                text=str(total_qty),
                                fill=qty_color,
-                               font=("Consolas", qty_size, "bold"))
+                               font=("Cascadia Mono", qty_size, "bold"))
             canvas.create_text(cx, cy + h * 0.30,
                                text=f"{num_items} products",
                                fill=self.BP_DIM,
-                               font=("Consolas", 7))
+                               font=("Cascadia Mono", 7))
 
     def _refresh_blueprint(self):
         """Redraw a realistic grocery store floor plan."""
@@ -390,7 +349,7 @@ class MiniMeijerApp:
         canvas.create_text(W / 2, M + title_h / 2,
                            text="MINI MEIJER \u2014 STORE FLOOR PLAN",
                            fill=self.BP_TEXT,
-                           font=("Consolas", 13, "bold"))
+                           font=("Cascadia Mono", 13, "bold"))
 
         # ── Store outer walls ──────────────────────────────────────
         canvas.create_rectangle(sx, sy, sx + sw, sy + sh,
@@ -409,7 +368,7 @@ class MiniMeijerApp:
         # Wall label
         canvas.create_text(sx + sw / 2, sy - 8,
                            text="\u2500\u2500 BACK WALL (fresh departments) \u2500\u2500",
-                           fill=self.BP_DIM, font=("Consolas", 7))
+                           fill=self.BP_DIM, font=("Cascadia Mono", 7))
 
         # --- LEFT WALL: Dairy (full height of inner area) ---
         self._draw_section(canvas, sx, sy + wall_d,
@@ -422,10 +381,10 @@ class MiniMeijerApp:
         # Side labels
         canvas.create_text(sx - 8, sy + wall_d + inner_h / 2,
                            text="DAIRY WALL", fill=self.BP_DIM,
-                           font=("Consolas", 7), angle=90)
+                           font=("Cascadia Mono", 7), angle=90)
         canvas.create_text(sx + sw + 8, sy + wall_d + inner_h / 2,
                            text="ALCOHOL WALL", fill=self.BP_DIM,
-                           font=("Consolas", 7), angle=90)
+                           font=("Cascadia Mono", 7), angle=90)
 
         # ══════════════════════════════════════════════════════════
         #  CENTER AISLES
@@ -462,14 +421,14 @@ class MiniMeijerApp:
             canvas.create_text(lane_x + aisle_gap / 2, ay + aisle_h / 2,
                                text=f"AISLE {i + 1}",
                                fill=self.BP_DIM,
-                               font=("Consolas", 6, "bold"), angle=90)
+                               font=("Cascadia Mono", 6, "bold"), angle=90)
             # Arrow indicators
             canvas.create_text(lane_x + aisle_gap / 2, ay + 10,
                                text="\u25BC", fill=self.BP_DIM,
-                               font=("Consolas", 8))
+                               font=("Cascadia Mono", 8))
             canvas.create_text(lane_x + aisle_gap / 2, ay + aisle_h - 10,
                                text="\u25B2", fill=self.BP_DIM,
-                               font=("Consolas", 8))
+                               font=("Cascadia Mono", 8))
 
             # Right shelf
             self._draw_section(canvas, lane_x + aisle_gap, ay,
@@ -486,7 +445,7 @@ class MiniMeijerApp:
         # Endcap label
         canvas.create_text(endcap_x + endcap_w / 2, endcap_y - 7,
                            text="\u25C6 ENDCAP",
-                           fill=YELLOW, font=("Consolas", 6, "bold"))
+                           fill=YELLOW, font=("Cascadia Mono", 6, "bold"))
 
         # ══════════════════════════════════════════════════════════
         #  CHECKOUT ZONE (bottom of store)
@@ -499,7 +458,7 @@ class MiniMeijerApp:
         canvas.create_text(sx + sw * 0.12, ck_y + ck_h / 2,
                            text="CHECKOUT",
                            fill=self.BP_TEXT,
-                           font=("Consolas", 10, "bold"))
+                           font=("Cascadia Mono", 10, "bold"))
 
         # Checkout lanes
         lane_count = 6
@@ -515,7 +474,7 @@ class MiniMeijerApp:
             canvas.create_text(lx + lw / 2, ck_y + ck_h / 2,
                                text=str(i + 1),
                                fill=self.BP_DIM,
-                               font=("Consolas", 9, "bold"))
+                               font=("Cascadia Mono", 9, "bold"))
 
         # Customer service desk
         cs_x = sx + sw * 0.82
@@ -524,7 +483,7 @@ class MiniMeijerApp:
                                 width=1)
         canvas.create_text((cs_x + sx + sw - 4) / 2, ck_y + ck_h / 2,
                            text="SERVICE\nDESK",
-                           fill=self.BP_TEXT, font=("Consolas", 7, "bold"),
+                           fill=self.BP_TEXT, font=("Cascadia Mono", 7, "bold"),
                            justify=tk.CENTER)
 
         # ── Entrance door (bottom wall, centered) ──────────────────
@@ -535,7 +494,7 @@ class MiniMeijerApp:
         canvas.create_text(door_x + entrance_w / 2, door_y + 14,
                            text="\u25B2  ENTRANCE / EXIT  \u25B2",
                            fill=self.BP_TEXT,
-                           font=("Consolas", 10, "bold"))
+                           font=("Cascadia Mono", 10, "bold"))
 
         # ── Legend ─────────────────────────────────────────────────
         lg_y = sy + sh + 26
@@ -549,7 +508,7 @@ class MiniMeijerApp:
                                     fill=color, outline="")
             canvas.create_text(bx + 18, lg_y + 6, text=label,
                                fill=self.BP_DIM,
-                               font=("Consolas", 8), anchor=tk.W)
+                               font=("Cascadia Mono", 8), anchor=tk.W)
 
     # ─── Tab 3: Inventory ───────────────────────────────────────────
 
@@ -569,12 +528,14 @@ class MiniMeijerApp:
         self.search_var.trace_add("write", lambda *a: self._refresh_inventory_table())
         search_entry = tk.Entry(search_frame, textvariable=self.search_var,
                                 font=FONT, bg=BG_CARD, fg=FG,
-                                insertbackground=FG, relief=tk.FLAT, width=30)
+                                insertbackground=FG, relief=tk.SOLID,
+                                highlightthickness=1, highlightcolor=ACCENT,
+                                highlightbackground=BORDER, bd=1, width=30)
         search_entry.pack(side=tk.LEFT, padx=(8, 0))
 
         # Refresh button
-        tk.Button(search_frame, text="Refresh", font=FONT_BOLD,
-                  bg=ACCENT, fg=BG, relief=tk.FLAT, padx=10,
+        tk.Button(search_frame, text="↻  Refresh", font=FONT_BOLD,
+                  bg=ACCENT, fg="#ffffff", relief=tk.FLAT, padx=10,
                   command=self._refresh_inventory_table
                   ).pack(side=tk.RIGHT)
 
@@ -616,90 +577,145 @@ class MiniMeijerApp:
         self.sim_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
         # Configure text tags for colored output
-        self.sim_text.tag_config("header",  foreground=ACCENT,  font=("Consolas", 11, "bold"))
+        self.sim_text.tag_config("header",  foreground=ACCENT,  font=("Cascadia Mono", 11, "bold"))
         self.sim_text.tag_config("success", foreground=GREEN)
         self.sim_text.tag_config("error",   foreground=RED)
         self.sim_text.tag_config("warning", foreground=YELLOW)
         self.sim_text.tag_config("info",    foreground=PURPLE)
         self.sim_text.tag_config("dim",     foreground=FG_DIM)
-        self.sim_text.tag_config("customer", foreground=TEAL, font=("Consolas", 10, "bold"))
+        self.sim_text.tag_config("customer", foreground=TEAL, font=("Cascadia Mono", 10, "bold"))
 
     # ─── Tab 4: Warehouse ────────────────────────────────────────
 
+    # Category icons for warehouse boxes
+    WH_ICONS = {
+        "Dairy":              "\U0001F95B",  # milk
+        "Produce":            "\U0001F34E",  # apple
+        "Meat":               "\U0001F969",  # steak
+        "Bakery":             "\U0001F35E",  # bread
+        "Beverages":          "\U0001F964",  # cup with straw
+        "Pantry":             "\U0001F3FA",  # amphora
+        "Snacks":             "\U0001F36A",  # cookie
+        "Desserts":           "\U0001F370",  # cake
+        "Frozen":             "\u2744\uFE0F",   # snowflake
+        "Household":          "\U0001F9F9",  # broom
+        "Kitchen Appliances": "\U0001F373",  # cooking
+        "Alcohol":            "\U0001F37A",  # beer
+    }
+
     def _build_warehouse_tab(self):
-        """Build the warehouse inventory tab showing stock per category."""
+        """Build the warehouse tab with a grid of box-icon category cards."""
         frame = tk.Frame(self.notebook, bg=BG)
         self.notebook.add(frame, text="  Warehouse  ")
 
-        # Header
+        # Header row
         top = tk.Frame(frame, bg=BG)
         top.pack(fill=tk.X, padx=10, pady=10)
 
-        tk.Label(top, text="Warehouse Inventory",
-                 font=FONT_HEADER, bg=BG, fg=TEAL).pack(side=tk.LEFT)
+        tk.Label(top, text="\U0001F4E6  Warehouse Inventory",
+                 font=FONT_HEADER, bg=BG, fg=ACCENT).pack(side=tk.LEFT)
 
-        tk.Button(top, text="Refresh", font=FONT_BOLD,
-                  bg=ACCENT, fg=BG, relief=tk.FLAT, padx=10,
+        tk.Button(top, text="↻  Refresh", font=FONT_BOLD,
+                  bg=ACCENT, fg="#ffffff", relief=tk.FLAT, padx=10,
                   command=self._refresh_warehouse
                   ).pack(side=tk.RIGHT)
 
         # Info bar
         info = tk.Frame(frame, bg=BG_CARD, padx=15, pady=10)
-        info.pack(fill=tk.X, padx=10, pady=(0, 5))
+        info.pack(fill=tk.X, padx=10, pady=(0, 8))
 
-        tk.Label(info, text="Delivery Schedule:", font=FONT_BOLD,
+        tk.Label(info, text="\U0001F69A  Delivery Schedule:", font=FONT_BOLD,
                  bg=BG_CARD, fg=FG).pack(side=tk.LEFT)
         tk.Label(info, text=f"  {', '.join(DELIVERY_DAYS)}  (before store opens)",
-                 font=FONT, bg=BG_CARD, fg=TEAL).pack(side=tk.LEFT)
+                 font=FONT, bg=BG_CARD, fg=ACCENT).pack(side=tk.LEFT)
 
         self.wh_total_label = tk.Label(info, text="Total per delivery: --",
                                         font=FONT, bg=BG_CARD, fg=FG_DIM)
         self.wh_total_label.pack(side=tk.RIGHT)
 
-        # Warehouse stock table
-        cols = ("category", "per_delivery", "products", "per_product")
-        self.wh_tree = ttk.Treeview(frame, columns=cols, show="headings",
-                                     style="Dark.Treeview", height=10)
-        self.wh_tree.heading("category",     text="Category")
-        self.wh_tree.heading("per_delivery", text="Units / Delivery")
-        self.wh_tree.heading("products",     text="Products in Category")
-        self.wh_tree.heading("per_product",  text="Units / Product")
+        # Grid container (scrollable)
+        grid_outer = tk.Frame(frame, bg=BG)
+        grid_outer.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 5))
 
-        self.wh_tree.column("category",     width=160, anchor=tk.W)
-        self.wh_tree.column("per_delivery", width=140, anchor=tk.E)
-        self.wh_tree.column("products",     width=160, anchor=tk.E)
-        self.wh_tree.column("per_product",  width=140, anchor=tk.E)
+        self.wh_grid_canvas = tk.Canvas(grid_outer, bg=BG, highlightthickness=0)
+        self.wh_grid_scroll = ttk.Scrollbar(grid_outer, orient=tk.VERTICAL,
+                                             command=self.wh_grid_canvas.yview)
+        self.wh_grid_inner = tk.Frame(self.wh_grid_canvas, bg=BG)
 
-        self.wh_tree.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 5))
+        self.wh_grid_inner.bind(
+            "<Configure>",
+            lambda e: self.wh_grid_canvas.configure(
+                scrollregion=self.wh_grid_canvas.bbox("all"))
+        )
+        self.wh_grid_win = self.wh_grid_canvas.create_window(
+            (0, 0), window=self.wh_grid_inner, anchor=tk.NW
+        )
+        self.wh_grid_canvas.configure(yscrollcommand=self.wh_grid_scroll.set)
+        self.wh_grid_canvas.bind(
+            "<Configure>",
+            lambda e: self.wh_grid_canvas.itemconfig(self.wh_grid_win, width=e.width)
+        )
+
+        self.wh_grid_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.wh_grid_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
         # Daily reports section
-        tk.Label(frame, text="Daily Reports",
-                 font=FONT_HEADER, bg=BG, fg=TEAL
-                 ).pack(anchor=tk.W, padx=10, pady=(10, 5))
+        dr_header = tk.Frame(frame, bg=BG)
+        dr_header.pack(fill=tk.X, padx=10, pady=(10, 5))
+
+        tk.Label(dr_header, text="\U0001F4CB  Daily Reports",
+                 font=FONT_HEADER, bg=BG, fg=ACCENT
+                 ).pack(side=tk.LEFT)
+
+        self.dr_view_mode = tk.StringVar(value="chart")
+        self.dr_toggle_btn = tk.Button(
+            dr_header, text="\U0001F4C4 Text View", font=FONT_BOLD,
+            bg=ACCENT, fg="#ffffff", relief=tk.FLAT, padx=10,
+            command=self._toggle_daily_report_view
+        )
+        self.dr_toggle_btn.pack(side=tk.RIGHT)
+
+        # Container that holds both views (only one visible at a time)
+        self.dr_container = tk.Frame(frame, bg=BG)
+        self.dr_container.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+
+        # Chart view
+        self.dr_chart_frame = tk.Frame(self.dr_container, bg=BG)
+        self.dr_chart_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Text view
+        self.dr_text_frame = tk.Frame(self.dr_container, bg=BG)
 
         self.delivery_text = scrolledtext.ScrolledText(
-            frame, font=FONT_MONO, bg=BG_CARD, fg=FG,
+            self.dr_text_frame, font=FONT_MONO, bg=BG_CARD, fg=FG,
             insertbackground=FG, relief=tk.FLAT,
             wrap=tk.WORD, state=tk.DISABLED, height=12
         )
-        self.delivery_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
-        self.delivery_text.tag_config("header", foreground=ACCENT, font=("Consolas", 10, "bold"))
+        self.delivery_text.pack(fill=tk.BOTH, expand=True)
+        self.delivery_text.tag_config("header", foreground=ACCENT, font=("Cascadia Mono", 10, "bold"))
         self.delivery_text.tag_config("success", foreground=GREEN)
         self.delivery_text.tag_config("warning", foreground=YELLOW)
         self.delivery_text.tag_config("error", foreground=RED)
         self.delivery_text.tag_config("dim", foreground=FG_DIM)
-        self.delivery_text.tag_config("info", foreground=TEAL)
+        self.delivery_text.tag_config("info", foreground=ACCENT)
 
         # Initial populate
         self._refresh_warehouse()
+        self._draw_daily_report_chart()
 
     def _refresh_warehouse(self):
-        """Refresh the warehouse stock table with current data."""
-        self.wh_tree.delete(*self.wh_tree.get_children())
+        """Refresh the warehouse grid with box-icon category cards."""
+        # Clear old cards
+        for widget in self.wh_grid_inner.winfo_children():
+            widget.destroy()
 
         total_units = 0
-        for i, (category, units) in enumerate(WAREHOUSE_STOCK.items()):
-            # Count products in this category currently in inventory
+        categories = list(WAREHOUSE_STOCK.items())
+        cols = 4  # 4 columns in the grid
+
+        for i, (category, units) in enumerate(categories):
+            row, col = divmod(i, cols)
+
             products_in_cat = [
                 e.value for e in inventory.all_entries()
                 if e.value.category == category
@@ -708,13 +724,67 @@ class MiniMeijerApp:
             per_product = units // num_products if num_products > 0 else 0
             total_units += units
 
-            tag = "alt" if i % 2 else ""
-            self.wh_tree.insert("", tk.END, values=(
-                category, units, num_products,
-                per_product if num_products > 0 else "N/A"
-            ), tags=(tag,))
+            icon = self.WH_ICONS.get(category, "\U0001F4E6")
 
-        self.wh_tree.tag_configure("alt", background=ROW_ALT)
+            # Stock level color
+            store_qty = sum(p.quantity for p in products_in_cat)
+            if store_qty == 0:
+                level_color = RED
+                level_text = "OUT"
+            elif store_qty < 30:
+                level_color = RED
+                level_text = "LOW"
+            elif store_qty < 100:
+                level_color = YELLOW
+                level_text = "OK"
+            else:
+                level_color = GREEN
+                level_text = "FULL"
+
+            # Build card
+            card = tk.Frame(self.wh_grid_inner, bg=BG_CARD,
+                            padx=12, pady=10, relief=tk.FLAT,
+                            highlightbackground=BORDER,
+                            highlightthickness=1)
+            card.grid(row=row, column=col, padx=6, pady=6, sticky="nsew")
+
+            # Icon + category name
+            tk.Label(card, text=icon, font=("Segoe UI Emoji", 26),
+                     bg=BG_CARD, fg=FG).pack(pady=(2, 4))
+            tk.Label(card, text=category.upper(), font=("Segoe UI", 9, "bold"),
+                     bg=BG_CARD, fg=ACCENT).pack()
+
+            # Divider
+            tk.Frame(card, bg=HEADER_BG, height=1).pack(fill=tk.X, pady=6)
+
+            # Stats in the box
+            stats_frame = tk.Frame(card, bg=BG_CARD)
+            stats_frame.pack(fill=tk.X)
+
+            # Left column: delivery info
+            left = tk.Frame(stats_frame, bg=BG_CARD)
+            left.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            tk.Label(left, text=f"{units} units", font=FONT_BOLD,
+                     bg=BG_CARD, fg=FG).pack(anchor=tk.W)
+            tk.Label(left, text=f"{num_products} products", font=FONT_SMALL,
+                     bg=BG_CARD, fg=FG_DIM).pack(anchor=tk.W)
+            tk.Label(left, text=f"{per_product} ea.", font=FONT_SMALL,
+                     bg=BG_CARD, fg=FG_DIM).pack(anchor=tk.W)
+
+            # Right column: stock status badge
+            right = tk.Frame(stats_frame, bg=BG_CARD)
+            right.pack(side=tk.RIGHT)
+            badge = tk.Frame(right, bg=level_color, padx=8, pady=3)
+            badge.pack(padx=(0, 4), pady=4)
+            tk.Label(badge, text=level_text, font=("Segoe UI", 8, "bold"),
+                     bg=level_color, fg="#ffffff").pack()
+            tk.Label(right, text=f"{store_qty} in store",
+                     font=("Segoe UI", 8), bg=BG_CARD, fg=FG_DIM).pack()
+
+        # Configure grid columns to expand evenly
+        for c in range(cols):
+            self.wh_grid_inner.columnconfigure(c, weight=1)
+
         self.wh_total_label.config(text=f"Total per delivery: {total_units} units")
 
     def _refresh_delivery_history(self):
@@ -780,6 +850,118 @@ class MiniMeijerApp:
         dt.insert(tk.END, f"  Total Restocked:   {week_restocked} units\n", "warning")
 
         dt.configure(state=tk.DISABLED)
+
+        # Also refresh chart if in chart mode
+        if self.dr_view_mode.get() == "chart":
+            self._draw_daily_report_chart()
+
+    def _toggle_daily_report_view(self):
+        """Toggle between chart and text view for daily reports."""
+        if self.dr_view_mode.get() == "chart":
+            # Switch to text view
+            self.dr_view_mode.set("text")
+            self.dr_toggle_btn.config(text="\U0001F4CA Chart View")
+            self.dr_chart_frame.pack_forget()
+            self.dr_text_frame.pack(fill=tk.BOTH, expand=True)
+        else:
+            # Switch to chart view
+            self.dr_view_mode.set("chart")
+            self.dr_toggle_btn.config(text="\U0001F4C4 Text View")
+            self.dr_text_frame.pack_forget()
+            self.dr_chart_frame.pack(fill=tk.BOTH, expand=True)
+            self._draw_daily_report_chart()
+
+    def _draw_daily_report_chart(self):
+        """Draw a grouped bar chart of daily metrics in the warehouse tab."""
+        # Clear old chart
+        for w in self.dr_chart_frame.winfo_children():
+            w.destroy()
+
+        if not self.report_data or not self.report_data.get("daily_reports"):
+            tk.Label(self.dr_chart_frame,
+                     text="No daily reports yet. Run a simulation to see charts.",
+                     font=FONT, bg=BG, fg=FG_DIM).pack(pady=30)
+            return
+
+        reports = self.report_data["daily_reports"]
+        days = [r["day"][:3] for r in reports]
+        revenue = [r["revenue"] for r in reports]
+        customers = [r["customers"] for r in reports]
+        items = [r["items_sold"] for r in reports]
+
+        import numpy as np
+        x = np.arange(len(days))
+        width = 0.28
+
+        fig = Figure(figsize=(10, 4.5), dpi=100)
+        fig.patch.set_facecolor(BG)
+
+        # ── Top chart: Revenue bar + Customer line overlay ──
+        ax1 = fig.add_subplot(211)
+        ax1.set_facecolor(BG_CARD)
+
+        bars = ax1.bar(x, revenue, width=0.5, color=ACCENT, alpha=0.9,
+                       label="Revenue ($)", zorder=2)
+        ax1.set_ylabel("Revenue ($)", color=FG_DIM, fontsize=8)
+        ax1.set_xticks(x)
+        ax1.set_xticklabels(days)
+        ax1.tick_params(colors=FG_DIM, labelsize=8)
+        for spine in ax1.spines.values():
+            spine.set_color(FG_DIM)
+            spine.set_linewidth(0.5)
+
+        # Add revenue labels on bars
+        for bar, val in zip(bars, revenue):
+            ax1.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + max(revenue) * 0.02,
+                     f"${val:,.0f}", ha="center", va="bottom", color=FG, fontsize=7)
+
+        # Overlay customer line on secondary axis
+        ax2 = ax1.twinx()
+        ax2.plot(x, customers, color=TEAL, marker="o", linewidth=2,
+                 markersize=5, label="Customers", zorder=3)
+        ax2.set_ylabel("Customers", color=TEAL, fontsize=8)
+        ax2.tick_params(axis="y", colors=TEAL, labelsize=8)
+        ax2.spines["right"].set_color(TEAL)
+        ax2.spines["right"].set_linewidth(0.5)
+        for side in ["top", "left", "bottom"]:
+            ax2.spines[side].set_visible(False)
+
+        ax1.set_title("Revenue & Customers by Day", color=FG, fontsize=10, pad=8)
+
+        # Combined legend
+        bars_legend = ax1.get_legend_handles_labels()
+        line_legend = ax2.get_legend_handles_labels()
+        ax1.legend(bars_legend[0] + line_legend[0],
+                   bars_legend[1] + line_legend[1],
+                   loc="upper left", fontsize=7,
+                   facecolor=BG_CARD, edgecolor=FG_DIM,
+                   labelcolor=FG_DIM)
+
+        # ── Bottom chart: Items sold + delivered/restocked stacked ──
+        ax3 = fig.add_subplot(212)
+        ax3.set_facecolor(BG_CARD)
+
+        delivered = [r["delivered"] for r in reports]
+        restocked = [r["restocked"] for r in reports]
+
+        ax3.bar(x - width, items, width, color=GREEN, alpha=0.9, label="Items Sold", zorder=2)
+        ax3.bar(x, delivered, width, color=YELLOW, alpha=0.9, label="Delivered", zorder=2)
+        ax3.bar(x + width, restocked, width, color=PURPLE, alpha=0.9, label="Restocked", zorder=2)
+
+        ax3.set_ylabel("Units", color=FG_DIM, fontsize=8)
+        ax3.set_xticks(x)
+        ax3.set_xticklabels(days)
+        ax3.tick_params(colors=FG_DIM, labelsize=8)
+        for spine in ax3.spines.values():
+            spine.set_color(FG_DIM)
+            spine.set_linewidth(0.5)
+        ax3.set_title("Items Sold / Deliveries / Restocks", color=FG, fontsize=10, pad=8)
+        ax3.legend(loc="upper left", fontsize=7,
+                   facecolor=BG_CARD, edgecolor=FG_DIM,
+                   labelcolor=FG_DIM)
+
+        fig.tight_layout(pad=1.5)
+        self._embed_chart(self.dr_chart_frame, fig, height=350)
 
     # ─── Tab 5: Customer Activity ─────────────────────────────────
 
@@ -916,9 +1098,9 @@ class MiniMeijerApp:
         self.hist_tree.column("items",  width=60,  anchor=tk.E)
 
         self.hist_tree.tag_configure("day_node",   foreground=ACCENT,
-                                     font=("Consolas", 10, "bold"))
+                                     font=("Cascadia Mono", 10, "bold"))
         self.hist_tree.tag_configure("high_roller", foreground=YELLOW,
-                                     font=("Consolas", 10, "bold"))
+                                     font=("Cascadia Mono", 10, "bold"))
         self.hist_tree.tag_configure("customer",   foreground=FG)
         self.hist_tree.tag_configure("item_ok",    foreground=GREEN)
         self.hist_tree.tag_configure("item_fail",  foreground=RED)
@@ -1052,8 +1234,8 @@ class MiniMeijerApp:
         tk.Label(top, text="Products at or below 10 units",
                  font=FONT_HEADER, bg=BG, fg=YELLOW).pack(side=tk.LEFT)
 
-        tk.Button(top, text=f"Auto-Restock All to {RESTOCK_TARGET}", font=FONT_BOLD,
-                  bg=GREEN, fg=BG, relief=tk.FLAT, padx=12,
+        tk.Button(top, text=f"↻  Auto-Restock All to {RESTOCK_TARGET}", font=FONT_BOLD,
+                  bg=GREEN, fg="#ffffff", relief=tk.FLAT, padx=12,
                   command=self._auto_restock
                   ).pack(side=tk.RIGHT)
 
@@ -1076,63 +1258,88 @@ class MiniMeijerApp:
     # ─── Tab 7: Report ──────────────────────────────────────────────
 
     def _build_report_tab(self):
-        """Build the detailed report tab."""
+        """Build the report tab with a scrollable canvas for charts."""
         frame = tk.Frame(self.notebook, bg=BG)
         self.notebook.add(frame, text="  Report  ")
 
-        self.report_text = scrolledtext.ScrolledText(
-            frame, font=FONT_MONO, bg=BG_CARD, fg=FG,
-            insertbackground=FG, relief=tk.FLAT,
-            wrap=tk.WORD, state=tk.DISABLED
-        )
-        self.report_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        # Scrollable container
+        self.report_canvas = tk.Canvas(frame, bg=BG, highlightthickness=0)
+        self.report_scrollbar = ttk.Scrollbar(frame, orient=tk.VERTICAL,
+                                               command=self.report_canvas.yview)
+        self.report_inner = tk.Frame(self.report_canvas, bg=BG)
 
-        self.report_text.tag_config("header",  foreground=ACCENT, font=("Consolas", 12, "bold"))
-        self.report_text.tag_config("success", foreground=GREEN)
-        self.report_text.tag_config("warning", foreground=YELLOW)
-        self.report_text.tag_config("info",    foreground=PURPLE)
-        self.report_text.tag_config("dim",     foreground=FG_DIM)
+        self.report_inner.bind(
+            "<Configure>",
+            lambda e: self.report_canvas.configure(
+                scrollregion=self.report_canvas.bbox("all"))
+        )
+        self.report_canvas_window = self.report_canvas.create_window(
+            (0, 0), window=self.report_inner, anchor=tk.NW
+        )
+        self.report_canvas.configure(yscrollcommand=self.report_scrollbar.set)
+
+        # Make inner frame stretch to canvas width
+        self.report_canvas.bind("<Configure>", self._on_report_canvas_resize)
+
+        self.report_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10, 0), pady=10)
+        self.report_scrollbar.pack(side=tk.RIGHT, fill=tk.Y, pady=10, padx=(0, 10))
+
+        # Mouse-wheel scrolling
+        self.report_canvas.bind_all("<MouseWheel>",
+            lambda e: self.report_canvas.yview_scroll(-1 * (e.delta // 120), "units"))
+
+        # Placeholder
+        self.report_placeholder = tk.Label(
+            self.report_inner,
+            text="Run a simulation to see the weekly report.",
+            font=FONT, bg=BG, fg=FG_DIM
+        )
+        self.report_placeholder.pack(pady=40)
+
+        # Keep references to chart canvases so they aren't garbage-collected
+        self._chart_widgets = []
+
+    def _on_report_canvas_resize(self, event):
+        """Stretch the inner frame to match the canvas width."""
+        self.report_canvas.itemconfig(self.report_canvas_window, width=event.width)
 
     # ─── Bottom Status Bar ──────────────────────────────────────────
 
     def _build_bottom_bar(self):
         """Build the persistent bottom status bar showing inventory totals."""
-        self.bottom_bar = tk.Frame(self.root, bg=HEADER_BG, height=38)
-        self.bottom_bar.pack(fill=tk.X, padx=10, pady=(2, 8))
+        self.bottom_bar = tk.Frame(self.root, bg=SIDEBAR_BG, height=38)
+        self.bottom_bar.pack(fill=tk.X, padx=0, pady=(2, 0))
         self.bottom_bar.pack_propagate(False)
 
         # Total Products
         tk.Label(self.bottom_bar, text="Products:", font=FONT_SMALL,
-                 bg=HEADER_BG, fg=FG_DIM).pack(side=tk.LEFT, padx=(15, 3))
+                 bg=SIDEBAR_BG, fg="#8888aa").pack(side=tk.LEFT, padx=(15, 3))
         self.bb_products = tk.Label(self.bottom_bar, text="0", font=FONT_BOLD,
-                                    bg=HEADER_BG, fg=ACCENT)
+                                    bg=SIDEBAR_BG, fg=PEACH)
         self.bb_products.pack(side=tk.LEFT, padx=(0, 18))
 
         # Total Units
         tk.Label(self.bottom_bar, text="Units:", font=FONT_SMALL,
-                 bg=HEADER_BG, fg=FG_DIM).pack(side=tk.LEFT, padx=(0, 3))
+                 bg=SIDEBAR_BG, fg="#8888aa").pack(side=tk.LEFT, padx=(0, 3))
         self.bb_units = tk.Label(self.bottom_bar, text="0", font=FONT_BOLD,
-                                  bg=HEADER_BG, fg=GREEN)
+                                  bg=SIDEBAR_BG, fg=MINT)
         self.bb_units.pack(side=tk.LEFT, padx=(0, 18))
 
         # Total Value
         tk.Label(self.bottom_bar, text="Value:", font=FONT_SMALL,
-                 bg=HEADER_BG, fg=FG_DIM).pack(side=tk.LEFT, padx=(0, 3))
+                 bg=SIDEBAR_BG, fg="#8888aa").pack(side=tk.LEFT, padx=(0, 3))
         self.bb_value = tk.Label(self.bottom_bar, text="$0.00", font=FONT_BOLD,
-                                  bg=HEADER_BG, fg=TEAL)
+                                  bg=SIDEBAR_BG, fg="#ffffff")
         self.bb_value.pack(side=tk.LEFT, padx=(0, 18))
 
         # Low Stock Count
         tk.Label(self.bottom_bar, text="Low Stock:", font=FONT_SMALL,
-                 bg=HEADER_BG, fg=FG_DIM).pack(side=tk.LEFT, padx=(0, 3))
+                 bg=SIDEBAR_BG, fg="#8888aa").pack(side=tk.LEFT, padx=(0, 3))
         self.bb_low = tk.Label(self.bottom_bar, text="0", font=FONT_BOLD,
-                                bg=HEADER_BG, fg=GREEN)
+                                bg=SIDEBAR_BG, fg=MINT)
         self.bb_low.pack(side=tk.LEFT)
 
         # Playback progress bar
-        s = ttk.Style()
-        s.configure("BP.Horizontal.TProgressbar",
-                     troughcolor=BG_CARD, background=TEAL)
         self.bb_progress = ttk.Progressbar(
             self.bottom_bar, length=160, mode="determinate",
             maximum=28, style="BP.Horizontal.TProgressbar"
@@ -1141,7 +1348,7 @@ class MiniMeijerApp:
 
         # Status / playback label (right side)
         self.bb_status = tk.Label(self.bottom_bar, text="Ready", font=FONT_SMALL,
-                                   bg=HEADER_BG, fg=FG_DIM)
+                                   bg=SIDEBAR_BG, fg="#8888aa")
         self.bb_status.pack(side=tk.RIGHT, padx=(0, 8))
 
     def _refresh_bottom_bar(self):
@@ -1331,10 +1538,16 @@ class MiniMeijerApp:
                         self._log(f"  [--] {day_name} surge declined. Prices unchanged.\n", "dim")
 
             # ── Time blocks for this day ────────────────────────────
+            high_blocks = HIGH_TRAFFIC_BLOCKS.get(day_name)
             for block_index, block in enumerate(TIME_BLOCKS):
                 block_label = block["label"]
-                block_customers = max(1, int(block["customers"] * traffic))
-                block_max_cart = block["max_cart"]
+                # High-traffic days (Fri/Sat/Sun) use fixed counts
+                if high_blocks:
+                    block_customers = high_blocks[block_index]["customers"]
+                    block_max_cart  = high_blocks[block_index]["max_cart"]
+                else:
+                    block_customers = max(1, int(block["customers"] * traffic))
+                    block_max_cart  = block["max_cart"]
                 block_revenue = 0.0
 
                 self._log(f"\n  --- {day_name} | {block_label} "
@@ -1549,32 +1762,6 @@ class MiniMeijerApp:
         if not data:
             return
 
-        # Dashboard stat cards
-        self.dash_welcome.pack_forget()
-        self.dash_stats_frame.pack(fill=tk.X, padx=10)
-        self.dash_time_frame.pack(fill=tk.BOTH, expand=True, padx=10)
-
-        self.stat_cards["customers"].config(text=str(data["total_customers"]))
-        self.stat_cards["items_sold"].config(text=str(data["total_items_sold"]))
-        self.stat_cards["revenue"].config(text=f"${data['total_revenue']:,.2f}")
-        self.stat_cards["failed"].config(
-            text=str(data["failed_purchases"]),
-            fg=RED if data["failed_purchases"] > 0 else GREEN
-        )
-        self.stat_cards["inv_value"].config(text=f"${data['value_after']:,.2f}")
-        self.stat_cards["deliveries"].config(
-            text=str(len(data.get("deliveries_log", []))),
-            fg=TEAL
-        )
-
-        # Draw time block bars
-        self._draw_time_blocks(data["sales_by_time_block"], data["total_revenue"])
-
-        # Draw daily revenue bars
-        self._draw_daily_revenue(data.get("sales_by_day", {}),
-                                 data.get("customers_by_day", {}),
-                                 data["total_revenue"])
-
         # Refresh tables
         self._refresh_inventory_table()
         self._refresh_low_stock()
@@ -1594,78 +1781,6 @@ class MiniMeijerApp:
         self.sim_running = False
         self.run_btn.configure(text="Run Again", bg=GREEN, state=tk.NORMAL)
         self.load_btn.configure(text="Reload Inventory", bg=ACCENT, state=tk.NORMAL)
-
-    def _draw_time_blocks(self, time_sales, total_revenue):
-        """Draw horizontal bar chart for revenue by time block."""
-        canvas = self.time_block_canvas
-        canvas.delete("all")
-
-        if not time_sales or total_revenue == 0:
-            return
-
-        canvas_width = canvas.winfo_width() or 900
-        bar_height = 32
-        y = 10
-        max_rev = max(time_sales.values()) if time_sales else 1
-        bar_colors = [ACCENT, PURPLE, GREEN, YELLOW]
-
-        for i, (label, rev) in enumerate(time_sales.items()):
-            pct = (rev / total_revenue * 100) if total_revenue else 0
-            bar_width = int((rev / max_rev) * (canvas_width - 350))
-
-            color = bar_colors[i % len(bar_colors)]
-
-            # Label
-            canvas.create_text(10, y + bar_height // 2, text=label,
-                               anchor=tk.W, fill=FG, font=FONT_SMALL)
-
-            # Bar
-            x_start = 200
-            canvas.create_rectangle(x_start, y + 4, x_start + bar_width, y + bar_height - 4,
-                                     fill=color, outline="")
-
-            # Value label
-            canvas.create_text(x_start + bar_width + 8, y + bar_height // 2,
-                               text=f"${rev:,.2f} ({pct:.1f}%)",
-                               anchor=tk.W, fill=FG_DIM, font=FONT_SMALL)
-
-            y += bar_height + 8
-
-    def _draw_daily_revenue(self, day_sales, day_customers, total_revenue):
-        """Draw horizontal bar chart for revenue by day of week."""
-        canvas = self.day_canvas
-        canvas.delete("all")
-
-        if not day_sales or total_revenue == 0:
-            return
-
-        canvas_width = canvas.winfo_width() or 900
-        bar_height = 30
-        y = 10
-        max_rev = max(day_sales.values()) if day_sales else 1
-        day_colors = [ACCENT, TEAL, PURPLE, FG_DIM, YELLOW, GREEN, RED]
-
-        for i, (day, rev) in enumerate(day_sales.items()):
-            pct = (rev / total_revenue * 100) if total_revenue else 0
-            bar_width = int((rev / max_rev) * (canvas_width - 400))
-            custs = day_customers.get(day, 0)
-            color = day_colors[i % len(day_colors)]
-
-            # Day label
-            canvas.create_text(10, y + bar_height // 2, text=day,
-                               anchor=tk.W, fill=FG, font=FONT_SMALL)
-
-            # Bar
-            x_start = 100
-            canvas.create_rectangle(x_start, y + 3, x_start + bar_width, y + bar_height - 3,
-                                     fill=color, outline="")
-
-            # Value + customer count
-            canvas.create_text(x_start + bar_width + 8, y + bar_height // 2,
-                               text=f"${rev:,.2f} ({pct:.1f}%)  --  {custs} customers",
-                               anchor=tk.W, fill=FG_DIM, font=FONT_SMALL)
-
-            y += bar_height + 6
 
     def _refresh_inventory_table(self):
         """Reload the inventory treeview with current data."""
@@ -1719,10 +1834,6 @@ class MiniMeijerApp:
         self._refresh_inventory_table()
         self._refresh_low_stock()
 
-        # Update inventory value on dashboard
-        if self.report_data:
-            self.stat_cards["inv_value"].config(text=f"${get_total_value():,.2f}")
-
         messagebox.showinfo("Restocked", f"Restocked {count} items to {RESTOCK_TARGET} units each.")
 
     def _log(self, text, tag=None):
@@ -1737,103 +1848,257 @@ class MiniMeijerApp:
             self.sim_text.configure(state=tk.DISABLED)
         self.root.after(0, _append)
 
-    def _build_report_text(self, data):
-        """Fill the report tab with formatted stats."""
-        rt = self.report_text
-        rt.configure(state=tk.NORMAL)
-        rt.delete("1.0", tk.END)
+    # ─── Chart Helpers ──────────────────────────────────────────────
 
-        rt.insert(tk.END, "=" * 55 + "\n", "header")
-        rt.insert(tk.END, "  DETAILED WEEKLY REPORT\n", "header")
-        rt.insert(tk.END, "=" * 55 + "\n\n", "header")
+    def _make_chart_colors(self):
+        """Return a list of colors for charts."""
+        return [ACCENT, GREEN, YELLOW, TEAL, PURPLE, RED,
+                PEACH, "#5fa8d3", "#9b5de5", "#52b788",
+                "#3d9e8f", "#d45d5d"]
 
-        # Revenue section
-        rt.insert(tk.END, "  REVENUE\n", "info")
-        rt.insert(tk.END, "  " + "-" * 40 + "\n", "dim")
-        avg = data["total_revenue"] / data["total_customers"] if data["total_customers"] else 0
-        lines = [
-            f"  Total revenue:          ${data['total_revenue']:,.2f}",
-            f"  Total items sold:       {data['total_items_sold']}",
-            f"  Failed purchases:       {data['failed_purchases']}",
-            f"  Inventory before:       ${data['value_before']:,.2f}",
-            f"  Inventory after:        ${data['value_after']:,.2f}",
-            f"  Value decrease:         ${data['value_before'] - data['value_after']:,.2f}",
-            f"  Avg spend / customer:   ${avg:,.2f}",
-            f"  Deliveries received:    {len(data.get('deliveries_log', []))}",
-        ]
+    def _style_figure(self, fig):
+        """Apply the light theme to a matplotlib figure."""
+        fig.patch.set_facecolor(BG)
+        for ax in fig.axes:
+            ax.set_facecolor(BG_CARD)
+            ax.tick_params(colors=FG_DIM, labelsize=8)
+            ax.xaxis.label.set_color(FG_DIM)
+            ax.yaxis.label.set_color(FG_DIM)
+            ax.title.set_color(FG)
+            for spine in ax.spines.values():
+                spine.set_color(BORDER)
+                spine.set_linewidth(0.5)
+
+    def _embed_chart(self, parent, fig, height=320):
+        """Embed a matplotlib figure into a tkinter parent frame."""
+        canvas = FigureCanvasTkAgg(fig, master=parent)
+        widget = canvas.get_tk_widget()
+        widget.configure(height=height, bg=BG)
+        widget.pack(fill=tk.X, padx=15, pady=(0, 10))
+        canvas.draw()
+        self._chart_widgets.append(canvas)
+        return canvas
+
+    def _add_section_label(self, parent, text):
+        """Add a styled section header label."""
+        tk.Label(parent, text=text, font=FONT_HEADER,
+                 bg=BG, fg=ACCENT).pack(anchor=tk.W, padx=15, pady=(18, 4))
+        tk.Frame(parent, bg=FG_DIM, height=1).pack(fill=tk.X, padx=15, pady=(0, 8))
+
+    def _add_stat_row(self, parent, items):
+        """Add a row of stat cards. items = [(label, value, color), ...]"""
+        row = tk.Frame(parent, bg=BG)
+        row.pack(fill=tk.X, padx=15, pady=6)
+        for label, value, color in items:
+            card = tk.Frame(row, bg=BG_CARD, padx=18, pady=10)
+            card.pack(side=tk.LEFT, padx=4, fill=tk.BOTH, expand=True)
+            tk.Label(card, text=str(value), font=("Segoe UI", 18, "bold"),
+                     bg=BG_CARD, fg=color).pack()
+            tk.Label(card, text=label, font=FONT_SMALL,
+                     bg=BG_CARD, fg=FG_DIM).pack()
+
+    def _add_text_card(self, parent, title, lines, title_color=PURPLE):
+        """Add a card with a title and list of text lines."""
+        card = tk.Frame(parent, bg=BG_CARD, padx=15, pady=12)
+        card.pack(fill=tk.X, padx=15, pady=(0, 10))
+        tk.Label(card, text=title, font=FONT_BOLD,
+                 bg=BG_CARD, fg=title_color).pack(anchor=tk.W)
         for line in lines:
-            rt.insert(tk.END, line + "\n")
+            tk.Label(card, text=line, font=FONT_MONO,
+                     bg=BG_CARD, fg=FG, anchor=tk.W,
+                     justify=tk.LEFT).pack(anchor=tk.W, pady=1)
 
-        # Revenue by day
+    def _build_report_text(self, data):
+        """Build the full report tab with matplotlib charts and stat cards."""
+        # Clear previous content
+        for widget in self.report_inner.winfo_children():
+            widget.destroy()
+        for chart in self._chart_widgets:
+            plt.close(chart.figure)
+        self._chart_widgets = []
+
+        colors = self._make_chart_colors()
+
+        # ══════════════════════════════════════════════════════════
+        # 1. REVENUE SUMMARY  (stat cards)
+        # ══════════════════════════════════════════════════════════
+        self._add_section_label(self.report_inner, "Revenue Summary")
+
+        total_rev = data["total_revenue"]
+        total_cust = data["total_customers"]
+        avg = total_rev / total_cust if total_cust else 0
+
+        self._add_stat_row(self.report_inner, [
+            ("Total Revenue",    f"${total_rev:,.2f}",              GREEN),
+            ("Items Sold",       str(data["total_items_sold"]),      ACCENT),
+            ("Customers",        str(total_cust),                   TEAL),
+            ("Failed Purchases", str(data["failed_purchases"]),      RED),
+        ])
+        self._add_stat_row(self.report_inner, [
+            ("Avg / Customer",   f"${avg:,.2f}",                    PURPLE),
+            ("Inventory Before", f"${data['value_before']:,.2f}",   FG),
+            ("Inventory After",  f"${data['value_after']:,.2f}",    FG),
+            ("Deliveries",       str(len(data.get('deliveries_log', []))), YELLOW),
+        ])
+
+        # ══════════════════════════════════════════════════════════
+        # 2. REVENUE BY DAY  (bar chart + line overlay for customers)
+        # ══════════════════════════════════════════════════════════
         day_sales = data.get("sales_by_day", {})
+        day_custs = data.get("customers_by_day", {})
         if day_sales:
-            rt.insert(tk.END, "\n  REVENUE BY DAY\n", "info")
-            rt.insert(tk.END, "  " + "-" * 40 + "\n", "dim")
-            custs = data.get("customers_by_day", {})
-            for day, rev in day_sales.items():
-                pct = (rev / data['total_revenue'] * 100) if data['total_revenue'] else 0
-                c = custs.get(day, 0)
-                bar = "#" * int(pct / 2)
-                rt.insert(tk.END, f"  {day:<12} ${rev:>8,.2f}  ({pct:4.1f}%)  "
-                                  f"{c:>3} cust  {bar}\n")
+            self._add_section_label(self.report_inner, "Revenue & Customers by Day")
 
-        # Time block breakdown
-        rt.insert(tk.END, "\n  REVENUE BY TIME BLOCK (weekly)\n", "info")
-        rt.insert(tk.END, "  " + "-" * 40 + "\n", "dim")
-        for label, rev in data["sales_by_time_block"].items():
-            pct = (rev / data["total_revenue"] * 100) if data["total_revenue"] else 0
-            bar = "\u2588" * int(pct / 2)
-            rt.insert(tk.END, f"  {label:<25} ${rev:>8,.2f} ({pct:4.1f}%)  {bar}\n")
+            fig, ax1 = plt.subplots(figsize=(8, 3.2))
+            days = list(day_sales.keys())
+            revs = list(day_sales.values())
+            custs = [day_custs.get(d, 0) for d in days]
 
-        # Profile distribution
-        rt.insert(tk.END, "\n  SHOPPER PROFILE DISTRIBUTION\n", "info")
-        rt.insert(tk.END, "  " + "-" * 40 + "\n", "dim")
+            bars = ax1.bar(days, revs, color=colors[:len(days)], edgecolor="none",
+                           width=0.55, zorder=3)
+            ax1.set_ylabel("Revenue ($)", fontsize=9)
+            ax1.set_title("Daily Revenue & Customer Count", fontsize=11, fontweight="bold")
+            ax1.grid(axis="y", color=FG_DIM, alpha=0.15, zorder=0)
+
+            # Value labels on bars
+            for bar, rev in zip(bars, revs):
+                ax1.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + max(revs) * 0.02,
+                         f"${rev:,.0f}", ha="center", va="bottom",
+                         fontsize=7, color=FG, fontweight="bold")
+
+            # Customer count line on secondary axis
+            ax2 = ax1.twinx()
+            ax2.plot(days, custs, color=YELLOW, marker="o", linewidth=2.5,
+                     markersize=7, zorder=5)
+            ax2.set_ylabel("Customers", fontsize=9, color=YELLOW)
+            ax2.tick_params(axis="y", colors=YELLOW, labelsize=8)
+            for spine in ax2.spines.values():
+                spine.set_visible(False)
+
+            self._style_figure(fig)
+            fig.tight_layout()
+            self._embed_chart(self.report_inner, fig, height=280)
+
+        # ══════════════════════════════════════════════════════════
+        # 3. REVENUE BY TIME BLOCK  (horizontal bar chart)
+        # ══════════════════════════════════════════════════════════
+        time_sales = data.get("sales_by_time_block", {})
+        if time_sales:
+            self._add_section_label(self.report_inner, "Revenue by Time Block")
+
+            fig, ax = plt.subplots(figsize=(8, 2.4))
+            labels = list(time_sales.keys())
+            values = list(time_sales.values())
+            bar_colors = [ACCENT, PURPLE, GREEN, YELLOW]
+
+            bars = ax.barh(labels[::-1], values[::-1],
+                           color=bar_colors[:len(labels)][::-1],
+                           edgecolor="none", height=0.55)
+            ax.set_xlabel("Revenue ($)", fontsize=9)
+            ax.set_title("Weekly Revenue by Time Block", fontsize=11, fontweight="bold")
+            ax.grid(axis="x", color=FG_DIM, alpha=0.15)
+
+            for bar, val in zip(bars, values[::-1]):
+                ax.text(bar.get_width() + max(values) * 0.02,
+                        bar.get_y() + bar.get_height() / 2,
+                        f"${val:,.0f}", va="center", fontsize=8, color=FG)
+
+            self._style_figure(fig)
+            fig.tight_layout()
+            self._embed_chart(self.report_inner, fig, height=220)
+
+        # ══════════════════════════════════════════════════════════
+        # 4. SHOPPER PROFILE DISTRIBUTION  (pie chart)
+        # ══════════════════════════════════════════════════════════
         profile_counts = data.get("profile_counts", {})
-        for name, count in sorted(profile_counts.items(), key=lambda x: -x[1]):
-            bar = "\u2588" * count
-            rt.insert(tk.END, f"  {name:<22} {count:>3} shoppers  {bar}\n")
+        if profile_counts:
+            self._add_section_label(self.report_inner, "Shopper Profile Distribution")
 
-        # Top products
-        sales = data["sales_by_product"]
+            fig, ax = plt.subplots(figsize=(6, 3.5))
+            names = list(profile_counts.keys())
+            counts = list(profile_counts.values())
+            pie_colors = colors[:len(names)]
+
+            wedges, texts, autotexts = ax.pie(
+                counts, labels=names, colors=pie_colors,
+                autopct="%1.0f%%", startangle=140,
+                textprops={"fontsize": 8, "color": FG},
+                pctdistance=0.78, labeldistance=1.12
+            )
+            for at in autotexts:
+                at.set_color(BG)
+                at.set_fontweight("bold")
+                at.set_fontsize(7)
+            ax.set_title("Customer Profile Breakdown", fontsize=11,
+                         fontweight="bold", color=FG)
+
+            self._style_figure(fig)
+            fig.tight_layout()
+            self._embed_chart(self.report_inner, fig, height=300)
+
+        # ══════════════════════════════════════════════════════════
+        # 5. TOP 10 MOST PURCHASED  (horizontal bar chart)
+        # ══════════════════════════════════════════════════════════
+        sales = data.get("sales_by_product", {})
         if sales:
+            self._add_section_label(self.report_inner, "Top 10 Most Purchased Items")
+
             sorted_sales = sorted(sales.items(), key=lambda x: -x[1])
-            rt.insert(tk.END, "\n  TOP 5 MOST PURCHASED\n", "info")
-            rt.insert(tk.END, "  " + "-" * 40 + "\n", "dim")
-            for rank, (name, qty) in enumerate(sorted_sales[:5], 1):
-                bar = "\u2588" * qty
-                rt.insert(tk.END, f"  {rank}. {name:<20} {qty:>3} sold  {bar}\n", "success")
+            top = sorted_sales[:10]
+            top_names = [s[0] for s in top][::-1]
+            top_qtys  = [s[1] for s in top][::-1]
 
-            rt.insert(tk.END, "\n  BOTTOM 3 LEAST PURCHASED\n", "info")
-            rt.insert(tk.END, "  " + "-" * 40 + "\n", "dim")
-            for name, qty in sorted_sales[-3:]:
-                rt.insert(tk.END, f"  {name:<22} {qty:>3} sold\n", "warning")
+            fig, ax = plt.subplots(figsize=(8, 3.5))
+            gradient = [GREEN] * len(top_names)
+            bars = ax.barh(top_names, top_qtys, color=gradient,
+                           edgecolor="none", height=0.6)
+            ax.set_xlabel("Units Sold", fontsize=9)
+            ax.set_title("Top 10 Best-Selling Products", fontsize=11, fontweight="bold")
+            ax.grid(axis="x", color=FG_DIM, alpha=0.15)
 
-        # Low stock hits
-        hits = data["low_stock_hits"]
+            for bar, val in zip(bars, top_qtys):
+                ax.text(bar.get_width() + max(top_qtys) * 0.02,
+                        bar.get_y() + bar.get_height() / 2,
+                        str(val), va="center", fontsize=8,
+                        color=FG, fontweight="bold")
+
+            self._style_figure(fig)
+            fig.tight_layout()
+            self._embed_chart(self.report_inner, fig, height=300)
+
+            # Bottom 3 as text card
+            bottom = sorted_sales[-3:]
+            bottom_lines = [f"{name:<22} {qty} sold" for name, qty in bottom]
+            self._add_text_card(self.report_inner, "Bottom 3 Least Purchased",
+                                bottom_lines, title_color=YELLOW)
+
+        # ══════════════════════════════════════════════════════════
+        # 6. TEXT CARDS  (low stock, deliveries, Friday sales)
+        # ══════════════════════════════════════════════════════════
+        hits = data.get("low_stock_hits", set())
         if hits:
-            rt.insert(tk.END, f"\n  ITEMS THAT HIT LOW STOCK ({len(hits)})\n", "warning")
-            rt.insert(tk.END, "  " + "-" * 40 + "\n", "dim")
-            for name in sorted(hits):
-                rt.insert(tk.END, f"  - {name}\n", "warning")
+            self._add_section_label(self.report_inner, f"Items That Hit Low Stock ({len(hits)})")
+            hit_lines = [f"  \u2022  {name}" for name in sorted(hits)]
+            self._add_text_card(self.report_inner, "Low Stock Alerts",
+                                hit_lines, title_color=RED)
 
-        # Deliveries
         deliveries = data.get("deliveries_log", [])
         if deliveries:
-            rt.insert(tk.END, f"\n  DELIVERIES\n", "info")
-            rt.insert(tk.END, "  " + "-" * 40 + "\n", "dim")
-            for day, units in deliveries:
-                rt.insert(tk.END, f"  {day}: {units} units from warehouse\n")
+            self._add_section_label(self.report_inner, "Deliveries")
+            del_lines = [f"{day}: {units} units from warehouse"
+                         for day, units in deliveries]
+            self._add_text_card(self.report_inner, "Warehouse Deliveries",
+                                del_lines, title_color=TEAL)
 
-        # Friday sales
         sale_items = data.get("sale_suggestions", [])
         if sale_items:
-            rt.insert(tk.END, f"\n  FRIDAY SALES APPLIED ({len(sale_items)} items)\n", "info")
-            rt.insert(tk.END, "  " + "-" * 40 + "\n", "dim")
-            for p, sale_price in sale_items:
-                rt.insert(tk.END, f"  {p.name:<20} sale: ${sale_price:.2f}\n", "success")
+            self._add_section_label(self.report_inner, "Friday Sales Applied")
+            sale_lines = [f"{p.name:<20}  sale: ${sp:.2f}" for p, sp in sale_items]
+            self._add_text_card(self.report_inner, f"{len(sale_items)} Items Discounted",
+                                sale_lines, title_color=GREEN)
 
-        rt.insert(tk.END, "\n" + "=" * 55 + "\n", "header")
-        rt.configure(state=tk.DISABLED)
+        # Scroll to top
+        self.report_canvas.yview_moveto(0)
 
 
 # ─── Launch ─────────────────────────────────────────────────────────
